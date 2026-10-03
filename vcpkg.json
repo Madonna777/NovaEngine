@@ -5,13 +5,13 @@
   "description": "Commercial-grade 3D game engine (DirectX 12)",
   "builtin-baseline": "5c41b3f8043a83b249c8a2ed952bd2ae55576087",
   "dependencies": [
-    "spdlog"
+    "spdlog",
+    "glfw3"
   ],
   "features": {
     "renderer": {
-      "description": "D3D12 renderer layer: windowing, shader compilation, profiling",
+      "description": "D3D12 renderer layer: shader compilation, profiling",
       "dependencies": [
-        "glfw3",
         "stb",
         "tracy",
         "directxmath"
