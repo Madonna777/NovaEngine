@@ -24,6 +24,7 @@ nova_add_module(Core
         src/CpuInfo.cpp
         src/Diagnostics.cpp
         src/GlfwRuntime.cpp
+        src/Input.cpp
         src/KeyCodes.cpp
         src/Log.cpp
         src/Platform.cpp
@@ -33,6 +34,7 @@ nova_add_module(Core
         GlfwRuntime.h
         Handle.h
         HandleRegistry.h
+        Input.h
         InputGlfw.h
         KeyCodes.h
         Log.h
