@@ -23,12 +23,15 @@ nova_add_module(Core
     SOURCES
         src/CpuInfo.cpp
         src/Diagnostics.cpp
+        src/KeyCodes.cpp
         src/Log.cpp
         src/Platform.cpp
     HEADERS
         Assert.h
         Handle.h
         HandleRegistry.h
+        InputGlfw.h
+        KeyCodes.h
         Log.h
         LogMacros.h
         LogTypes.h
