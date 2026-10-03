@@ -2,14 +2,23 @@
 #  Nova::Core
 # ===========================================================================
 #  Platform primitives with no engine-specific knowledge: logging, timing,
-#  assertions, and the entity handle system.
+#  assertions, the entity handle system, and the window / input / main-loop
+#  layer the executables are built on.
 #
 #  DEPENDENCY RULE (enforced by review, not by tooling, yet):
 #  Core may depend on the C++ standard library and vcpkg packages. It must NOT
-#  depend on Math, Renderer, Scene or Input. The reason is cycle avoidance: the
-#  Renderer will want to assert on GPU state, which means Renderer will want
-#  NOVA_ASSERT. If Core needed anything from Renderer to implement logging, that
-#  cycle becomes a link error or, worse, a circular header dependency.
+#  depend on Math, Renderer, Scene or Input MODULES. The reason is cycle
+#  avoidance: the Renderer will want to assert on GPU state, which means
+#  Renderer will want NOVA_ASSERT. If Core needed anything from Renderer to
+#  implement logging, that cycle becomes a link error or, worse, a circular
+#  header dependency.
+#
+#  A NOTE ON THAT RULE'S WORDING: Input.h now lives inside Core, so the old
+#  sentence - which forbade Core from depending on "Input" - would have been
+#  self-contradictory. What the rule protects is inter-module dependency, and
+#  that is what this now says. Keyboard and mouse belong here because they need
+#  a window handle to poll; a separate Input module would mean Core -> Input ->
+#  Core the moment Input also wanted an assertion.
 #
 #  SOURCES ARE LISTED EXPLICITLY - never use file(GLOB ...).
 #  WHY: GLOB does not re-run when a file is added or removed unless the whole
@@ -17,10 +26,17 @@
 #  stale source list - you add a .cpp, it is ignored, and you spend an hour
 #  wondering why your new class "doesn't exist" when the compiler never saw
 #  it. Explicit lists also make the module's dependency surface reviewable.
+#
+#  AND THE LIST IS ADDED TO IN THE SAME COMMIT AS THE FILE ITSELF, which is the
+#  second reason it is explicit. A source that is listed before it exists fails
+#  at CONFIGURE time with "Cannot find source file" - loud, but it still breaks
+#  every commit in between. Writing this module's history one commit at a time
+#  and configuring each commit caught exactly that, twice.
 # ===========================================================================
 
 nova_add_module(Core
     SOURCES
+        src/Application.cpp
         src/CpuInfo.cpp
         src/Diagnostics.cpp
         src/GlfwRuntime.cpp
@@ -30,6 +46,7 @@ nova_add_module(Core
         src/Platform.cpp
         src/Window.cpp
     HEADERS
+        Application.h
         Assert.h
         GlfwRuntime.h
         Handle.h
