@@ -2,8 +2,8 @@
 
 A 3D game engine in C++20 on DirectX 12, for Windows 10/11 x64.
 
-Work-in-progress. The Core layer builds and is exercised by the Sandbox
-smoke test; the renderer has not started.
+Work-in-progress. The window / input / main-loop layer builds and opens a real
+HWND; nothing is rendered yet, because there is no swap chain.
 
 ## Build requirements
 
@@ -52,15 +52,19 @@ Binaries land in `build/<preset>/bin/<Config>/`.
     |   |-- NovaCompilerSettings.cmake   Shared target settings
     |   `-- NovaWarnings.cmake            Central warning policy
     |-- Engine/
-    |   |-- Core/            Logging, platform, assertions, handles  [IMPLEMENTED]
+    |   |-- Core/            Logging, platform, asserts, handles,
+    |   |                    window, input, application loop  [IMPLEMENTED]
     |   |-- Math/            DirectXMath facade                     [NEXT]
     |   |-- Renderer/        D3D12 backend
-    |   |-- Scene/           Scene graph, entity storage
-    |   `-- Input/           Keyboard, mouse, gamepad
+    |   `-- Scene/           Scene graph, entity storage
     |-- Editor/              Long-lived tool (placeholder)
-    |-- Sandbox/             Disposable test app (Core smoke test)
+    |-- Sandbox/             Disposable test app
     |-- Shaders/             HLSL + compilation manifest
     `-- ThirdParty/          Vendored deps - currently none
+
+Keyboard and mouse live in `Core`, not in a separate `Input` module. They need a
+window handle to poll, and splitting them out would mean `Core` -> `Input` ->
+`Core` the moment `Input` also wanted an assertion.
 
 ## Conventions
 
@@ -101,14 +105,52 @@ the Editor's severity filter can name `LogLevel` without parsing spdlog.
 
 ## Module dependency rules
 
-`Core` depends on the standard library and vcpkg only. It must not depend on
-`Math`, `Renderer`, `Scene` or `Input` - the Renderer will want to assert on GPU
-state, so it will want `NOVA_ASSERT`, and a cycle there is a link error.
+`Core` depends on the standard library and vcpkg only - currently `spdlog` and
+`glfw3`. It must not depend on `Math`, `Renderer` or `Scene`: the Renderer will
+want to assert on GPU state, so it will want `NOVA_ASSERT`, and a cycle there is
+a link error.
 
-Build order is `Math` -> `Input` -> `Renderer` -> `Scene`. Scene comes after
-Renderer deliberately: the scene graph allocates from GPU-visible heaps, so the
-renderer owns memory and the scene describes what to put in it, not the other
-way round.
+Build order is `Math` -> `Renderer` -> `Scene`. Scene comes after Renderer
+deliberately: the scene graph allocates from GPU-visible heaps, so the renderer
+owns memory and the scene describes what to put in it, not the other way round.
+
+## Windowing and input
+
+| Header | Role |
+| --- | --- |
+| `Core/Window.h` | RAII window. `GLFW_CLIENT_API = GLFW_NO_API` - no GL context is created. |
+| `Core/GlfwRuntime.h` | The **only** place that calls `glfwInit` / `glfwTerminate`. Reference counted. |
+| `Core/KeyCodes.h` | `Nova::Key::Code`. Engine-owned numbering starting at 0. |
+| `Core/InputGlfw.h` | `Nova::Key` -> GLFW translation. Internal; the only Core header that includes GLFW. |
+| `Core/Input.h` | Per-frame snapshot plus edge detection (`IsKeyDown` / `IsKeyPressed` / `IsKeyReleased`). |
+| `Core/Application.h` | Base class: owns the `Window`, runs the loop, calls the virtual `OnUpdate`. |
+
+Three decisions worth knowing before reading the code:
+
+**`glfwInit` is reference counted, not per-window.** It is process-global, so a
+second window calling `glfwTerminate` in its destructor tears the library down
+underneath the first - undefined behaviour that usually surfaces as a crash
+inside GLFW, minutes later. `GlfwRuntime.h` is the single owner.
+
+**`Nova::Key::Code` is not GLFW's numbering.** GLFW's `GLFW_KEY_SPACE` is 32;
+reading it as Nova's 32 would bind the wrong key. The translation lives in
+`InputGlfw.h`, with `static_assert`s that compare the mapping against GLFW's own
+headers - so a mis-translated key is a build failure.
+
+**`SetVSync` only records the request.** `glfwSwapInterval` acts on an OpenGL
+context, and this engine's window has none. Under D3D12 the vertical blank
+belongs to the DXGI swap chain, so the renderer reads `IsVSyncEnabled()` when it
+creates one. Until then the value is inert.
+
+### What the window looks like right now
+
+White, not black. With no swap chain there is nothing to clear, so the client
+area shows the Win32 window-class background, which is white. That is not a bug
+in this layer and not something it should paper over with a black brush hack -
+it is the renderer's job, and it goes away when `IDXGISwapChain` exists.
+
+The main loop is also unpaced until then, so `Sandbox` reports six-figure FPS.
+`ApplicationProperties::targetFramesPerSecond` caps it if a fixed rate is wanted.
 
 ## Current state
 
@@ -122,12 +164,21 @@ way round.
 - `Handle` / `HandleRegistry<Tag, T>` - generation-checked 64-bit entity
   handles over dense/sparse storage, with O(1) create, lookup and
   swap-remove destroy.
+- `Window` / `GlfwRuntime` / `Input` / `Key` - a real window, polled keyboard
+  and mouse, and `Nova::Key` identifiers with no GLFW dependency.
+- `Application` - the base class both executables derive from: owns the window,
+  runs the loop, computes delta time, and calls a virtual `OnUpdate`.
 
-Run `Sandbox.exe` to see all of it working and to confirm the toolchain.
+Run `Sandbox.exe`, then press **Escape** (or click the title-bar X). What it
+proves: GLFW initialises, an HWND is created and shown, the loop runs, input
+polling reaches the keyboard and mouse, and teardown is clean with exit code 0.
+What it does not prove: anything about rendering - nothing is drawn.
 
 ## Next
 
 1. `Math` - `Nova::Math` over DirectXMath, plus a unit test suite. Pure CPU
    code, no OS dependency, testable without a GPU.
-2. Precompiled headers for the modules (the log header pulls in spdlog).
-3. `Renderer` - device, swap chain and command queue via GLFW.
+2. `Renderer` - device, swap chain and command queue on the existing window.
+   This is what turns the client area black instead of white, and what gives
+   the loop something to pace itself against.
+3. Precompiled headers for the modules (the log header pulls in spdlog).
