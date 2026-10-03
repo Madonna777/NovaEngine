@@ -26,8 +26,8 @@ int main()
                           /*consoleOutput=*/true,
                           /*flushOnError=*/true);
 
-    NOVA_INFO("NovaEngine Editor - not yet implemented");
-    NOVA_INFO("Next: Renderer module (device, swap chain, GLFW window), then ImGui.");
+    NOVA_CLIENT_INFO("NovaEngine Editor - not yet implemented");
+    NOVA_CLIENT_INFO("Next: Renderer module (device, swap chain, GLFW window), then ImGui.");
 
     Nova::Log::Shutdown();
     return 0;

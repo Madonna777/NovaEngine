@@ -47,7 +47,7 @@ struct Entity
 ///       is the whole point.
 void DemoHandleRegistry()
 {
-    NOVA_INFO("--- Handle registry ---");
+    NOVA_CLIENT_INFO("--- Handle registry ---");
 
     Nova::HandleRegistry<EntityTag, Entity> entities;
     entities.Reserve(1024); // One allocation for the whole batch.
@@ -55,7 +55,7 @@ void DemoHandleRegistry()
     const Nova::Handle<EntityTag> player = entities.Emplace("Player", 100.0f);
     const Nova::Handle<EntityTag> orc    = entities.Emplace("Orc", 55.0f);
 
-    NOVA_INFO("created {} entities, capacity {} slots",
+    NOVA_CLIENT_INFO("created {} entities, capacity {} slots",
               entities.AliveCount(), entities.Capacity());
 
     NOVA_VERIFY(entities.IsAlive(player));
@@ -67,13 +67,13 @@ void DemoHandleRegistry()
     const bool destroyed = entities.Destroy(player);
     NOVA_VERIFY_MSG(destroyed, "Destroy reported failure for a live handle");
 
-    NOVA_INFO("destroyed '{}'; alive count now {}",
+    NOVA_CLIENT_INFO("destroyed '{}'; alive count now {}",
               player.ToString(), entities.AliveCount());
 
     // THE INTERESTING PART: 'player' is still a set, non-null, 64-bit value.
     // It is simply no longer valid, and the registry says so. Without
     // generation counters this is the exact use-after-free a game loop hits.
-    NOVA_INFO("stale handle {} -> IsAlive={} (expected false), TryGet={}",
+    NOVA_CLIENT_INFO("stale handle {} -> IsAlive={} (expected false), TryGet={}",
               player.ToString(),
               entities.IsAlive(player),
               entities.TryGet(player) == nullptr ? "nullptr (expected)" : "LEAKED");
@@ -86,14 +86,14 @@ void DemoHandleRegistry()
     // Destroying twice must be safe: gameplay code and a deferred death timer
     // can both decide an entity is dead in the same frame.
     const bool doubleDestroy = entities.Destroy(player);
-    NOVA_INFO("double destroy returned {} (expected false, must be idempotent)",
+    NOVA_CLIENT_INFO("double destroy returned {} (expected false, must be idempotent)",
               doubleDestroy);
 
     // Slot reuse: the freed index should come back for the next allocation, and
     // the new entity must get a DIFFERENT generation so it cannot be confused
     // with the old one.
     const Nova::Handle<EntityTag> replacement = entities.Create();
-    NOVA_INFO("recycled slot: old={} new={} sameIndex={} sameGeneration={}",
+    NOVA_CLIENT_INFO("recycled slot: old={} new={} sameIndex={} sameGeneration={}",
               player.ToString(), replacement.ToString(),
               player.GetIndex() == replacement.GetIndex(),
               player.GetGeneration() == replacement.GetGeneration());
@@ -106,12 +106,12 @@ void DemoHandleRegistry()
                     "old handle became valid again after slot reuse");
 
     // Dense iteration: only live instances, in storage order.
-    NOVA_INFO("iterating live entities:");
+    NOVA_CLIENT_INFO("iterating live entities:");
     entities.ForEach([](Nova::Handle<EntityTag> handle, Entity& entity) {
-        NOVA_INFO("  {} -> '{}' (health {:.0f})", handle.ToString(), entity.name, entity.health);
+        NOVA_CLIENT_INFO("  {} -> '{}' (health {:.0f})", handle.ToString(), entity.name, entity.health);
     });
 
-    NOVA_INFO("alive count {} / capacity {}", entities.AliveCount(), entities.Capacity());
+    NOVA_CLIENT_INFO("alive count {} / capacity {}", entities.AliveCount(), entities.Capacity());
 }
 
 /// Proves the tag-based type separation compiles.
@@ -135,7 +135,7 @@ void DemoTypeSeparation()
     // which is exactly the mistake we want a compiler to catch.
     NOVA_VERIFY(entities.IsAlive(entity));
     NOVA_VERIFY(debugValues.IsAlive(debug));
-    NOVA_INFO("entity handle and debug handle are distinct types (compile-time guarantee)");
+    NOVA_CLIENT_INFO("entity handle and debug handle are distinct types (compile-time guarantee)");
 }
 
 /// Reports host hardware. Timing accuracy is the part worth checking: if
@@ -143,20 +143,20 @@ void DemoTypeSeparation()
 /// read as 0.000 or 0.015, and frame profiling built on them would be worthless.
 void DemoPlatform()
 {
-    NOVA_INFO("--- Platform ---");
+    NOVA_CLIENT_INFO("--- Platform ---");
 
     const auto cpu = Nova::Platform::GetCpuInfo();
-    NOVA_INFO("CPU    : {} ({} physical / {} logical cores, widest SIMD {} bit)",
+    NOVA_CLIENT_INFO("CPU    : {} ({} physical / {} logical cores, widest SIMD {} bit)",
               cpu.vendor, cpu.physicalCoreCount, cpu.logicalCoreCount,
               cpu.largestSimdWidthInBits);
-    NOVA_INFO("features: SSE2={} AVX={} FMA={} AVX2={}",
+    NOVA_CLIENT_INFO("features: SSE2={} AVX={} FMA={} AVX2={}",
               cpu.hasSse2, cpu.hasAvx, cpu.hasFma, cpu.hasAvx2);
 
     const auto memory = Nova::Platform::GetMemoryInfo();
-    NOVA_INFO("memory : {:.1f} GiB total, {:.1f} GiB available",
+    NOVA_CLIENT_INFO("memory : {:.1f} GiB total, {:.1f} GiB available",
               static_cast<double>(memory.totalBytes) / (1024.0 * 1024.0 * 1024.0),
               static_cast<double>(memory.availableBytes) / (1024.0 * 1024.0 * 1024.0));
-    NOVA_INFO("process: {:.2f} MiB committed, {:.2f} MiB working set, {}-byte pages",
+    NOVA_CLIENT_INFO("process: {:.2f} MiB committed, {:.2f} MiB working set, {}-byte pages",
               static_cast<double>(memory.processCommittedBytes) / (1024.0 * 1024.0),
               static_cast<double>(memory.processWorkingSetBytes) / (1024.0 * 1024.0),
               memory.pageSize);
@@ -195,7 +195,7 @@ void DemoPlatform()
 
     if (smallestDeltaNs != ~std::uint64_t{0})
     {
-        NOVA_INFO("timer  : {} Hz, resolution ~{} ns, {} samples in {:.3f} ms",
+        NOVA_CLIENT_INFO("timer  : {} Hz, resolution ~{} ns, {} samples in {:.3f} ms",
                   Nova::Platform::GetHighResolutionFrequency(), smallestDeltaNs, kSamples,
                   elapsed * 1000.0);
     }
@@ -203,7 +203,7 @@ void DemoPlatform()
     {
         // Reported explicitly rather than printing a sentinel value: a bare
         // 18446744073709551615 in a log reads like a real measurement.
-        NOVA_WARN("timer  : {} Hz - counter did not advance in {} samples; "
+        NOVA_CLIENT_WARN("timer  : {} Hz - counter did not advance in {} samples; "
                   "frame timing will not be trustworthy",
                   Nova::Platform::GetHighResolutionFrequency(), kSamples);
     }
@@ -214,11 +214,11 @@ void DemoPlatform()
 /// text in a log file weeks later.
 void DemoErrorFormatting()
 {
-    NOVA_INFO("--- Diagnostics ---");
+    NOVA_CLIENT_INFO("--- Diagnostics ---");
 
-    NOVA_INFO("GetLastErrorMessage(5)  = '{}'", Nova::Platform::GetLastErrorMessage(5));
-    NOVA_INFO("GetLastErrorMessage(2)  = '{}'", Nova::Platform::GetLastErrorMessage(2));
-    NOVA_INFO("bogus code 0x8000BEEF = '{}'",
+    NOVA_CLIENT_INFO("GetLastErrorMessage(5)  = '{}'", Nova::Platform::GetLastErrorMessage(5));
+    NOVA_CLIENT_INFO("GetLastErrorMessage(2)  = '{}'", Nova::Platform::GetLastErrorMessage(2));
+    NOVA_CLIENT_INFO("bogus code 0x8000BEEF = '{}'",
               Nova::Platform::GetLastErrorMessage(0x8000BEEF));
 
     // A deliberately caught failure: proves the exception machinery and the
@@ -230,7 +230,7 @@ void DemoErrorFormatting()
     }
     catch (const std::exception& error)
     {
-        NOVA_INFO("caught expected exception: {}", error.what());
+        NOVA_CLIENT_INFO("caught expected exception: {}", error.what());
     }
 
     // NOVA_VERIFY with a side effect: because it always evaluates, the counter
@@ -239,7 +239,45 @@ void DemoErrorFormatting()
     NOVA_VERIFY(++sideEffectCount == 1);
     NOVA_VERIFY(++sideEffectCount == 2);
     NOVA_VERIFY(++sideEffectCount == 3);
-    NOVA_INFO("NOVA_VERIFY evaluated a side effect {} times (expected 3)", sideEffectCount);
+    NOVA_CLIENT_INFO("NOVA_VERIFY evaluated a side effect {} times (expected 3)", sideEffectCount);
+}
+
+/// Demonstrates that the two log channels route independently.
+///
+/// WHY THIS NEEDS A RUNTIME CHECK RATHER THAN A COMMENT: the channels share a
+/// single sink instance, and the channel tag is produced by the sink's pattern
+/// from the logger's NAME. A bug in this area does not crash, does not lose a
+/// line, and does not fail to build - it produces a log that looks perfectly
+/// healthy while attributing every engine message to the game. The only way to
+/// catch that is to emit on both channels and read the tags back.
+void DemoLogChannels()
+{
+    NOVA_CLIENT_INFO("--- Log channels ---");
+
+    // One record per channel. Applied correctly these carry different tags;
+    // with logger->set_pattern used instead of sink->set_pattern both carry the
+    // SAME tag, which is exactly the bug this demo exists to catch.
+    NOVA_INFO("engine-side record, emitted with NOVA_INFO");
+    NOVA_CLIENT_INFO("client-side record, emitted with NOVA_CLIENT_INFO");
+
+    NOVA_CLIENT_INFO("Core logger   : name='{}' minLevel={}",
+                     Nova::Log::Channel(Nova::LogChannel::Core).name(),
+                     Nova::LogLevelName(
+                         Nova::Log::ChannelLevel(Nova::LogChannel::Core)));
+    NOVA_CLIENT_INFO("Client logger : name='{}' minLevel={}",
+                     Nova::Log::Channel(Nova::LogChannel::Client).name(),
+                     Nova::LogLevelName(
+                         Nova::Log::ChannelLevel(Nova::LogChannel::Client)));
+
+    // The level filters are per channel, so silencing one must not silence the
+    // other. That independence is the entire reason for two loggers instead of
+    // one logger with a category field, so it is worth proving, not asserting.
+    Nova::Log::SetChannelLevel(Nova::LogChannel::Core, Nova::LogLevel::Off);
+    NOVA_INFO("this Core record is suppressed and must NOT appear");
+    NOVA_CLIENT_INFO("Client is unaffected by the Core filter (as expected)");
+
+    Nova::Log::SetChannelLevel(Nova::LogChannel::Core, Nova::LogLevel::Debug);
+    NOVA_INFO("Core is visible again after restoring its level");
 }
 } // namespace
 
@@ -267,8 +305,8 @@ int main()
         std::printf("[Sandbox] logging fell back to console only\n");
     }
 
-    NOVA_CRITICAL("NovaEngine Sandbox - Core foundation check");
-    NOVA_INFO("platform={} thread={} loggingInitialised={}",
+    NOVA_CLIENT_CRITICAL("NovaEngine Sandbox - Core foundation check");
+    NOVA_CLIENT_INFO("platform={} thread={} loggingInitialised={}",
               Nova::Platform::GetPlatformName(),
               Nova::Platform::GetCurrentThreadId(),
               Nova::Log::IsInitialized());
@@ -277,11 +315,12 @@ int main()
     DemoHandleRegistry();
     DemoTypeSeparation();
     DemoErrorFormatting();
+    DemoLogChannels();
 
     // Spaced box so the final summary is greppable in a log file.
-    NOVA_INFO("============================================================");
-    NOVA_INFO(" Core foundation OK");
-    NOVA_INFO("============================================================");
+    NOVA_CLIENT_INFO("============================================================");
+    NOVA_CLIENT_INFO(" Core foundation OK");
+    NOVA_CLIENT_INFO("============================================================");
 
     // Explicit shutdown so buffered records reach disk while the exit code is
     // still ours. The ExitFlush guard in Log.cpp is a backstop, not the plan.
