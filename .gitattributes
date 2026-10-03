@@ -1,0 +1,63 @@
+# ===========================================================================
+#  Line ending policy
+# ---------------------------------------------------------------------------
+#  WHY THIS FILE EXISTS
+#  --------------------
+#  Without it, Git's behaviour depends on each developer's core.autocrlf
+#  setting, and the same commit can look like a whole-file rewrite on someone
+#  else's machine. The default state of this repo was already producing
+#  "LF will be replaced by CRLF" warnings on every checkout.
+#
+#  THE POLICY
+#  ----------
+#  Store LF in the repository, always. Check out CRLF on Windows for files
+#  Windows tooling expects to be CRLF. This gives:
+#    * identical bytes in the object database regardless of who committed,
+#    * no phantom whole-file diffs when a line-ending preference differs,
+#    * LF on Linux/macOS and in CI, so shell scripts and CI scripts behave.
+#
+#  C++ sources are listed as text=auto rather than forced to CRLF: modern
+#  MSVC, Clang and GCC all handle LF correctly, and leaving them LF keeps
+#  diffs clean when the same file is edited on either platform.
+# ===========================================================================
+
+# Default: normalise text files to LF in the repository, honour platform
+# conventions on checkout.
+* text=auto eol=lf
+
+# ---------------------------------------------------------------------------
+#  Windows-only scripts: CRLF, because cmd.exe mis-parses LF-only batch files
+#  (a stray LF inside a .bat can silently truncate a line).
+# ---------------------------------------------------------------------------
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# ---------------------------------------------------------------------------
+#  Files that must stay binary. Marking these prevents Git from attempting to
+#  normalise them, which corrupts shaders, textures and imported assets.
+# ---------------------------------------------------------------------------
+*.dll   binary
+*.lib   binary
+*.exe   binary
+*.pdb   binary
+*.obj   binary
+*.cso   binary
+*.dxil  binary
+*.spv   binary
+*.dds   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.tga   binary
+*.fbx   binary
+*.glb   binary
+
+# ---------------------------------------------------------------------------
+#  Generated artefacts that should never be committed, even by accident.
+#  This is a second line of defence: .gitignore covers the build trees, but
+#  these patterns catch the same extensions anywhere else in the tree.
+# ---------------------------------------------------------------------------
+build/**     text=auto
+*.log        text
+*.user      text

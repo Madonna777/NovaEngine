@@ -1,0 +1,97 @@
+{
+  "version": 9,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 28,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Visual Studio 18 2026",
+      "architecture": "x64",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "installDir": "${sourceDir}/install/${presetName}",
+      "cacheVariables": {
+        "NOVA_BUILD_SANDBOX": "ON",
+        "NOVA_BUILD_EDITOR": "ON",
+        "NOVA_BUILD_TESTS": "OFF",
+        "NOVA_WARNINGS_AS_ERRORS": "OFF"
+      }
+    },
+    {
+      "name": "vs2026-debug",
+      "displayName": "Visual Studio 2026 - Debug",
+      "inherits": "base"
+    },
+    {
+      "name": "vs2026-relwithdebinfo",
+      "displayName": "Visual Studio 2026 - RelWithDebInfo",
+      "description": "Optimised with PDBs. The configuration to profile and ship candidates in.",
+      "inherits": "base"
+    },
+    {
+      "name": "ninja-debug",
+      "displayName": "Ninja - Debug",
+      "description": "Fast incremental builds. Requires Ninja on PATH. Open the folder in VS for debugging.",
+      "generator": "Ninja",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "NOVA_BUILD_SANDBOX": "ON",
+        "NOVA_BUILD_EDITOR": "ON",
+        "NOVA_BUILD_TESTS": "OFF"
+      }
+    },
+    {
+      "name": "ninja-dev",
+      "displayName": "Ninja - RelWithDebInfo",
+      "description": "Optimised, symbols retained, and fast to iterate. The day-to-day preset.",
+      "generator": "Ninja",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "NOVA_BUILD_SANDBOX": "ON",
+        "NOVA_BUILD_EDITOR": "ON",
+        "NOVA_BUILD_TESTS": "OFF"
+      }
+    },
+    {
+      "name": "vs2026-tests",
+      "displayName": "Visual Studio 2026 - Debug (unit tests)",
+      "inherits": "base",
+      "cacheVariables": {
+        "NOVA_BUILD_TESTS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "vs2026-debug",
+      "configurePreset": "vs2026-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "vs2026-relwithdebinfo",
+      "configurePreset": "vs2026-relwithdebinfo",
+      "configuration": "RelWithDebInfo"
+    },
+    {
+      "name": "ninja-debug",
+      "configurePreset": "ninja-debug"
+    },
+    {
+      "name": "ninja-dev",
+      "configurePreset": "ninja-dev"
+    },
+    {
+      "name": "vs2026-tests",
+      "configurePreset": "vs2026-tests",
+      "configuration": "Debug"
+    }
+  ]
+}

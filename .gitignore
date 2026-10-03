@@ -1,0 +1,70 @@
+# ---------------------------------------------------------------------------
+# Build output
+# ---------------------------------------------------------------------------
+build/
+out/
+artifacts/
+install/
+
+# ---------------------------------------------------------------------------
+# vcpkg — manifest mode pulls these into <build>/vcpkg_installed, but they also
+# land in-tree if someone runs a non-manifest install.
+# ---------------------------------------------------------------------------
+vcpkg_installed/
+vcpkg_installed_*/
+
+# ---------------------------------------------------------------------------
+# IDE — Visual Studio 2026 / CMake-generated project trees
+# ---------------------------------------------------------------------------
+.vs/
+.vscode/
+CMakeUserPresets.json
+*.user
+*.suo
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.opendb
+ipch/
+*.ipch
+
+# ---------------------------------------------------------------------------
+# Compiled artifacts
+# ---------------------------------------------------------------------------
+*.obj
+*.o
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+*.exe
+*.log
+
+# NOTE: *.dll/*.lib are ignored globally because generated shader modules and
+# DXIL blobs land in build output. If you ever vendor a binary library, add a
+# negation rule like:  !ThirdParty/libs/**
+
+# ---------------------------------------------------------------------------
+# Shaders — compiled output only; sources (.hlsl) are tracked
+# ---------------------------------------------------------------------------
+Shaders/**/bin/
+Shaders/**/*.cso
+Shaders/**/*.dxil
+Shaders/*.spv
+
+# ---------------------------------------------------------------------------
+# Asset pipeline intermediates / imported caches
+# ---------------------------------------------------------------------------
+.cache/
+*.dds.bak
+Tracy/ProfilerOutput/
+
+# ---------------------------------------------------------------------------
+# OS cruft
+# ---------------------------------------------------------------------------
+Thumbs.db
+desktop.ini
+.DS_Store
+*.tmp
+*.log.old

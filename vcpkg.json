@@ -1,0 +1,34 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "novaengine",
+  "version-string": "0.1.0",
+  "description": "Commercial-grade 3D game engine (DirectX 12)",
+  "builtin-baseline": "5c41b3f8043a83b249c8a2ed952bd2ae55576087",
+  "dependencies": [
+    "spdlog"
+  ],
+  "features": {
+    "renderer": {
+      "description": "D3D12 renderer layer: windowing, shader compilation, profiling",
+      "dependencies": [
+        "glfw3",
+        "stb",
+        "tracy",
+        "directxmath"
+      ]
+    },
+    "editor": {
+      "description": "Editor tooling layer: UI and asset import",
+      "dependencies": [
+        "imgui",
+        "assimp"
+      ]
+    },
+    "tests": {
+      "description": "Unit test framework for Math, Core and Scene layers",
+      "dependencies": [
+        "gtest"
+      ]
+    }
+  }
+}
