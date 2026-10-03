@@ -21,3 +21,33 @@
 add_executable(Sandbox src/main.cpp)
 
 target_link_libraries(Sandbox PRIVATE Nova::Core)
+
+# ---------------------------------------------------------------------------
+#  SHADERS
+# ---------------------------------------------------------------------------
+#  WHY THE COPY: a shader is loaded at RUNTIME by path, so it has to sit next to
+#  the executable. A post-build copy is the standard mechanism for that.
+#
+#  WHY copy_directory AND NOT A PER-FILE copy COMMAND: this stays correct when
+#  shaders gain subdirectories (Shaders/Post/Blur.hlsl). An explicit list of
+#  files has to be updated by hand at that point, and the failure mode is
+#  silent - the build succeeds and the renderer fails to find the shader at
+#  load time. Copying a directory of a few kilobytes is not a measurable cost.
+#
+#  WHY Shaders/ IS NOT A SOURCE DIRECTORY: shaders are runtime assets, not
+#  compiled sources. Marking them as sources would put them in the IDE's file
+#  list, which is misleading, and tempts someone into adding them to a target.
+set(NOVA_SHADER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../Shaders")
+
+if(EXISTS "${NOVA_SHADER_DIR}")
+    add_custom_command(TARGET Sandbox POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${NOVA_SHADER_DIR}"
+                "$<TARGET_FILE_DIR:Sandbox>/Shaders"
+        COMMENT "Staging shaders into $<TARGET_FILE_DIR:Sandbox>/Shaders"
+        VERBATIM)
+else()
+    message(FATAL_ERROR
+        "Shaders directory not found at ${NOVA_SHADER_DIR}. The renderer loads "
+        "shaders by path at runtime, so this must exist.")
+endif()

@@ -74,6 +74,30 @@ Binaries land in `build/<preset>/bin/<Config>/`.
 - Doxygen comments (`///`) on every public API.
 - `<windows.h>` in `.cpp` files only, never in headers.
 - Explicit source lists in CMake. No `file(GLOB)`.
+- Files stay under 200 lines of code (comments excluded). If one is about to
+  cross that, split it at a real seam rather than letting it grow.
+
+### Logging
+
+`Nova::Log` has two channels with **independent level filters**:
+
+| Channel  | Macro prefix      | Used by                          |
+| -------- | ----------------- | -------------------------------- |
+| `Core`   | `NOVA_*`          | everything under `Engine/`       |
+| `Client` | `NOVA_CLIENT_*`   | `Sandbox/`, `Editor/`, game code |
+
+Both channels write to one shared sink set, so a Core and a Client record can
+never interleave mid-line in a log file. The channel is tagged by the logger
+name via the pattern's `%n`.
+
+The point of the split is filtering, not labelling: to raise the engine to Trace
+while silencing client logging entirely, set the levels per channel. A category
+field on a single logger cannot do that.
+
+Severity and channel enums are in `<Core/LogTypes.h>` and the macros in
+`<Core/LogMacros.h>`; both are pulled in by `<Core/Log.h>`, so consumers only
+include the one header. `LogTypes.h` exists separately so the assert handler and
+the Editor's severity filter can name `LogLevel` without parsing spdlog.
 
 ## Module dependency rules
 
