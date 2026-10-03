@@ -36,6 +36,31 @@
 #include <psapi.h> // PROCESS_MEMORY_COUNTERS_EX
 #include <string_view>
 
+// ===========================================================================
+//  WINDOWS ABI INVARIANTS
+// ---------------------------------------------------------------------------
+//  These belong here, not in Platform.h, for a specific reason: they need
+//  <Windows.h>, and <Windows.h> is confined to .cpp files across the engine.
+//
+//  Putting them in a header would mean every translation unit that includes it
+//  also parses the ~200ms Windows SDK prologue and inherits its
+//  min/max/TRUE/FALSE macros - breaking std::numeric_limits and any template
+//  using min(), engine-wide. Isolating the assertions in this one translation
+//  unit is what lets <Core/Target.h> stay cheap and macro-free.
+//
+//  Each of these is a property of the COM/D3D12 binary ABI. Violate one and the
+//  code still compiles, then misreads vtables or writes the wrong number of
+//  bytes into a GPU-visible buffer.
+// ===========================================================================
+static_assert(sizeof(LONG) == 4,
+              "LONG must be 32-bit: it is the COM ABI return type, and the width of "
+              "every vtable slot follows from it");
+static_assert(sizeof(DWORD) == 4, "DWORD must be 32-bit");
+static_assert(sizeof(HRESULT) == 4, "HRESULT must be 32-bit: it is a status code, not a pointer");
+static_assert(sizeof(ULONG_PTR) == 8, "ULONG_PTR must be 64-bit on a 64-bit target");
+static_assert(sizeof(void*) == sizeof(ULONG_PTR),
+              "pointer and ULONG_PTR width must agree for correct COM marshalling");
+
 namespace Nova::Platform
 {
 MemoryInfo GetMemoryInfo()
@@ -107,7 +132,11 @@ std::uint32_t GetCurrentThreadId()
 
 std::string_view GetPlatformName()
 {
-    return "Windows";
+    // Returns the macro from <Core/Target.h> rather than a string literal, so
+    // that the platform name has exactly one definition in the engine. Adding a
+    // backend means editing the macro block once, not hunting down every
+    // hard-coded name.
+    return NOVA_PLATFORM_NAME;
 }
 
 void CpuRelax()

@@ -30,7 +30,10 @@ nova_add_module(Core
         Handle.h
         HandleRegistry.h
         Log.h
+        LogMacros.h
+        LogTypes.h
         Platform.h
+        Target.h
     DEPENDS
         spdlog::spdlog
 )

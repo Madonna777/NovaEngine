@@ -19,8 +19,15 @@
 //  NOTHING HERE OWNS A RESOURCE. No handles, no lifetimes, no state. Every
 //  function is a pure query or an immediate action. That is deliberate: state
 //  in a platform layer is where uninitialisation-order bugs go to hide.
+//
+//  Platform detection macros (NOVA_PLATFORM_*) and the portable compile-time
+//  binary invariants live in <Core/Target.h>. They are included rather than
+//  repeated here so that a consumer of this header gets both without having to
+//  know that only one of them is about the OS.
 // ===========================================================================
 #pragma once
+
+#include <Core/Target.h>
 
 #include <cstdint>
 #include <string>
