@@ -140,10 +140,28 @@ public:
     [[nodiscard]] std::pair<int, int> GetSize() const;
 
     /// @return Aspect ratio (width / height). Returns 1.0 when height is 0,
-    ///         which happens if the user drags a window to zero height. Without
-    ///         the guard the result is an infinity that silently poisons every
-    ///         projection matrix built from it.
+    ///         which happens if the user drags the window to zero height.
+    ///         Without the guard the result is an infinity that silently poisons
+    ///         every projection matrix built from it.
     [[nodiscard]] float GetAspectRatio() const;
+
+    // -----------------------------------------------------------------------
+    //  DPI: WHAT "PIXELS" MEANS HERE
+    // -----------------------------------------------------------------------
+    //  Every size above is in PHYSICAL pixels, not logical ones.
+    //
+    //  GLFW 3.3+ calls SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2) on
+    //  Win32 before creating any window, so its coordinate space is physical
+    //  pixels and a 1280x720 request on a 125%-scaled display is a 1280x720
+    //  window. Verified on this machine: glfwGetWindowSize reports 1280x720
+    //  while an external DPI-UNAWARE caller sees the same window as 1024x576.
+    //  Both numbers are correct; they are different units.
+    //
+    //  This matters to the renderer, and only the renderer. A D3D12 swap chain's
+    //  back buffers must be PHYSICAL pixel dimensions, so GetSize() feeds
+    //  DXGI_SWAP_CHAIN_DESC1.BufferDesc.Width directly with no scaling step.
+    //  Sizing them in logical pixels instead is a bug that looks correct on a
+    //  100% display and produces a window a fifth too small everywhere else.
 
     void SetTitle(std::string_view title);
     [[nodiscard]] std::string GetTitle() const;
