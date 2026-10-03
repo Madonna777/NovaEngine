@@ -1,0 +1,301 @@
+// ===========================================================================
+//  Window.cpp
+// ---------------------------------------------------------------------------
+//  GLFW-backed window. The only translation unit that includes <GLFW/glfw3.h>
+//  for window management.
+// ===========================================================================
+
+#include <Core/Window.h>
+
+#include <Core/GlfwRuntime.h>
+#include <Core/Log.h>
+
+#include <stdexcept>
+#include <utility>
+
+#include <GLFW/glfw3.h>
+
+namespace Nova
+{
+Window::Window(WindowProperties properties)
+    : properties_(std::move(properties)), vsyncRequested_(properties_.vsync)
+{
+    // Takes a reference to the process-global GLFW runtime. Held for this
+    // object's lifetime, which is what guarantees the library outlives every
+    // window in the process. See GlfwRuntime.h for why this is counted.
+    if (!Detail::AcquireGlfw())
+    {
+        // Fatal, and reported through the message rather than a NOVA_CRITICAL
+        // that might be missed: an application with no window cannot do
+        // anything useful, and returning a half-built Window would push this
+        // failure to whoever called a method on it.
+        throw std::runtime_error("Window: GLFW could not be initialised");
+    }
+
+    // GLFW window hints are process-global state consumed by the next
+    // glfwCreateWindow call. Every hint that affects creation is set here and
+    // nowhere else, so there is exactly one description of how Nova windows
+    // look.
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+
+    // Why we are not asking for an OpenGL context: the renderer is D3D12 and
+    // will create a DXGI swap chain bound to this HWND. Requesting a GL
+    // context would load opengl32.dll and create one we would never use.
+    glfwWindowHint(GLFW_RESIZABLE, properties_.resizable ? GLFW_TRUE : GLFW_FALSE);
+
+    if (properties_.startHidden)
+    {
+        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    }
+
+    // WHY NO GLFW_SAMPLES (MSAA) HERE: this hint asks the windowing system for
+    // a multisampled default framebuffer, which only has meaning for OpenGL.
+    // Under D3D12 multisampling is a property of the swap chain's
+    // DXGI_SAMPLE_DESC, set at creation by the renderer. Setting this hint
+    // would imply an anti-aliasing guarantee the engine cannot honour.
+
+    handle_ = glfwCreateWindow(properties_.width, properties_.height,
+                               properties_.title.c_str(), nullptr, nullptr);
+
+    VerifyCreated();
+
+    SetVSync(properties_.vsync);
+
+    // Registers this Window with the OS so callbacks can map a GLFWwindow*
+    // back to it. Must happen before any callback can fire, and there are no
+    // callbacks yet - the engine polls input - so there is no window of
+    // opportunity for an event to arrive with a null user pointer.
+    glfwSetWindowUserPointer(handle_, this);
+
+    NOVA_INFO("Window created: '{}' {}x{} vsync={}", properties_.title,
+              properties_.width, properties_.height, properties_.vsync);
+}
+
+Window::~Window()
+{
+    // glfwDestroyWindow is safe on null, so a window whose creation failed
+    // destructs cleanly. It MUST run before ReleaseGlfw: destroying a window
+    // after the library is gone is undefined behaviour inside GLFW.
+    if (handle_ != nullptr)
+    {
+        glfwDestroyWindow(handle_);
+        handle_ = nullptr;
+    }
+
+    Detail::ReleaseGlfw();
+}
+
+void Window::VerifyCreated()
+{
+    if (handle_ != nullptr)
+    {
+        return;
+    }
+
+    // The GLFW error callback has already logged the reason. This message is
+    // the one a crash dump or a build-server log will show, so it states the
+    // consequence rather than repeating the cause.
+    NOVA_CRITICAL("Window creation failed for '{}' {}x{}",
+                  properties_.title, properties_.width, properties_.height);
+
+    // Releases the reference taken in the constructor. Without this the
+    // exception would unwind past the destructor - a constructor that throws
+    // never runs its own destructor, so the count would leak by one and GLFW
+    // would never be terminated.
+    Detail::ReleaseGlfw();
+
+    throw std::runtime_error("Window: glfwCreateWindow failed");
+}
+
+void Window::PumpEvents()
+{
+    // No-op if the window is gone. Makes the call safe in a shutdown path that
+    // may run after the window was reset.
+    if (handle_ == nullptr)
+    {
+        return;
+    }
+
+    glfwPollEvents();
+}
+
+void Window::Present()
+{
+    if (handle_ == nullptr)
+    {
+        return;
+    }
+
+    // WHY THERE IS NO glfwSwapBuffers CALL
+    // ------------------------------------
+    // glfwSwapBuffers presents a GL drawing buffer. Our window is created with
+    // GLFW_CLIENT_API = GLFW_NO_API, so no such buffer exists and the call
+    // would be undefined behaviour on a window with no context.
+    //
+    // Presentation is therefore not this class's job: the D3D12 renderer will
+    // call IDXGISwapChain::Present() on a DXGI swap chain bound to this window's
+    // HWND, and that - not GLFW - is what puts pixels on screen. Keeping the
+    // call out now means the renderer never has to work around a stray GL
+    // present, and this method stays the single "frame is over" call site.
+}
+
+bool Window::ShouldClose() const
+{
+    return handle_ != nullptr && glfwWindowShouldClose(handle_) == GLFW_TRUE;
+}
+
+void Window::RequestClose()
+{
+    if (handle_ != nullptr)
+    {
+        glfwSetWindowShouldClose(handle_, GLFW_TRUE);
+    }
+}
+
+int Window::GetWidth() const
+{
+    if (handle_ == nullptr)
+    {
+        return properties_.width;
+    }
+
+    int width  = 0;
+    int height = 0;
+    glfwGetWindowSize(handle_, &width, &height);
+    return width;
+}
+
+int Window::GetHeight() const
+{
+    if (handle_ == nullptr)
+    {
+        return properties_.height;
+    }
+
+    int width  = 0;
+    int height = 0;
+    glfwGetWindowSize(handle_, &width, &height);
+    return height;
+}
+
+std::pair<int, int> Window::GetSize() const
+{
+    if (handle_ == nullptr)
+    {
+        return {properties_.width, properties_.height};
+    }
+
+    int width  = 0;
+    int height = 0;
+    // ONE GLFW call for both dimensions. Two separate GetWidth/GetHeight calls
+    // could straddle a user resize and return a pairing that never existed.
+    glfwGetWindowSize(handle_, &width, &height);
+    return {width, height};
+}
+
+float Window::GetAspectRatio() const
+{
+    const auto [width, height] = GetSize();
+    return height != 0 ? static_cast<float>(width) / static_cast<float>(height) : 1.0F;
+}
+
+void Window::SetTitle(std::string_view title)
+{
+    if (handle_ != nullptr)
+    {
+        // std::string_view::data() is NOT guaranteed null-terminated, and
+        // glfwSetWindowTitle takes a C string. The copy is made here rather
+        // than once in the header because this is the only place it is needed.
+        glfwSetWindowTitle(handle_, std::string{title}.c_str());
+    }
+    properties_.title = std::string{title};
+}
+
+std::string Window::GetTitle() const
+{
+    if (handle_ == nullptr)
+    {
+        return std::string{properties_.title};
+    }
+
+    const char* current = glfwGetWindowTitle(handle_);
+    return current != nullptr ? std::string{current} : std::string{properties_.title};
+}
+
+void Window::SetSize(int width, int height)
+{
+    if (handle_ != nullptr)
+    {
+        glfwSetWindowSize(handle_, width, height);
+    }
+    properties_.width  = width;
+    properties_.height = height;
+}
+
+void Window::SetVSync(bool enabled)
+{
+    // The request is RECORDED, not applied. There is deliberately no
+    // glfwSwapInterval call here:
+    //
+    //   glfwSwapInterval sets the interval on the CURRENT OpenGL context. Our
+    //   window is created with GLFW_CLIENT_API = GLFW_NO_API, so there is no
+    //   context and the call fails with GLFW_ERROR_NO_CURRENT_CONTEXT on every
+    //   invocation. It was tried; the Sandbox logged one error per call.
+    //
+    //   More importantly it would be the WRONG control even if it worked. The
+    //   engine renders with D3D12, so the frame is presented by
+    //   IDXGISwapChain::Present, and the vertical blank is that swap chain's
+    //   business - DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL with a sync interval of 1,
+    //   or swap chain v1's BufferCount of 2. Pacing a D3D12 frame from an OpenGL
+    //   context that does not exist is not a shortcut, it is a category error.
+    //
+    // So this is a request the renderer consumes. IsVSyncEnabled() is how it
+    // asks. Until a swap chain exists the value is simply inert, which is why
+    // Sandbox logs "vsync=true" and then runs without any pacing at all - that
+    // line is honest, not a bug.
+    vsyncRequested_ = enabled;
+}
+
+bool Window::IsVSyncEnabled() const
+{
+    return vsyncRequested_;
+}
+
+void Window::SetVisible(bool visible)
+{
+    if (handle_ != nullptr)
+    {
+        if (visible)
+        {
+            glfwShowWindow(handle_);
+        }
+        else
+        {
+            glfwHideWindow(handle_);
+        }
+    }
+}
+
+double Window::GetTimeSeconds() const
+{
+    // GLFW's clock is monotonic and starts at library init, so the absolute
+    // value is meaningless - only differences are. Documented at the call site
+    // because "seconds since the window opened" is the correct reading and
+    // "time of day" is the tempting wrong one.
+    return glfwGetTime();
+}
+
+void Window::SetUserPointer(void* pointer) noexcept
+{
+    if (handle_ != nullptr)
+    {
+        glfwSetWindowUserPointer(handle_, pointer);
+    }
+}
+
+void* Window::GetUserPointer() const noexcept
+{
+    return handle_ != nullptr ? glfwGetWindowUserPointer(handle_) : nullptr;
+}
+
+} // namespace Nova

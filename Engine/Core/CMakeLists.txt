@@ -23,11 +23,14 @@ nova_add_module(Core
     SOURCES
         src/CpuInfo.cpp
         src/Diagnostics.cpp
+        src/GlfwRuntime.cpp
         src/KeyCodes.cpp
         src/Log.cpp
         src/Platform.cpp
+        src/Window.cpp
     HEADERS
         Assert.h
+        GlfwRuntime.h
         Handle.h
         HandleRegistry.h
         InputGlfw.h
@@ -37,6 +40,7 @@ nova_add_module(Core
         LogTypes.h
         Platform.h
         Target.h
+        Window.h
     DEPENDS
         spdlog::spdlog
         glfw
