@@ -33,10 +33,14 @@
 #include <Core/KeyCodes.h>
 #include <Core/Log.h>
 #include <Renderer/D3D12Context.h>
+#include <Renderer/Pipeline.h>
+#include <Renderer/VertexBuffer.h>
 
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <iterator>
 
 namespace
 {
@@ -95,6 +99,8 @@ protected:
                          context_->GetBackBufferWidth(), context_->GetBackBufferHeight(),
                          Nova::Renderer::D3D12Context::kSwapBufferCount,
                          context_->GetDedicatedVideoMemoryBytes() / (1024ULL * 1024ULL));
+
+        CreateTriangleResources();
 
         NOVA_CLIENT_INFO("Press Escape to close");
     }
@@ -196,12 +202,22 @@ protected:
         //  The whole D3D12 frame, in the order D3D12 requires.
         //
         //    BeginFrame   - waits for this frame's allocator to be free, resizes
-        //                   if the window changed, and acquires a back buffer.
-        //    Clear        - recorded into the command list. Costs one write on
-        //                   the CPU; the GPU has not been told anything yet.
-        //    EndFrame     - closes the list, submits it, presents, and signals
-        //                   the fence so the NEXT BeginFrame knows when this
-        //                   allocator may be reset.
+        //                   if the window changed, acquires a back buffer, and
+        //                   transitions it to render-target state.
+        //    Clear        - paints the background into the acquired buffer.
+        //    Viewport     - recorded command scoping pixel space to the swap
+        //                   chain size; without it every draw lands in a 0-sized
+        //                   box, which is why so many first-triangles are black.
+        //    Scissor      - stronger clip than the viewport for pixels that must
+        //                   never escape; paired with it here.
+        //    Pipeline     - PSO and root signature are command-list state just
+        //                   like the viewport; set before the vertex buffer and
+        //                   draw because the draw consumes them as one package.
+        //    VertexBuffer - bound on slot 0 of the IA stage.
+        //    DrawInstanced(3, 1, 0, 0) - three vertices as one TRIANGLELIST.
+        //    EndFrame     - closes the list, transitions back to PRESENT state,
+        //                   submits, presents, and signals the fence so the next
+        //                   BeginFrame knows when this allocator may be reused.
         //
         //  THE ORDER IS NOT A STYLE CHOICE. Resize after BeginFrame and the
         //  buffer is invalidated after it was acquired. Clear after EndFrame and
@@ -210,13 +226,24 @@ protected:
         //  starting the next frame and the frame rate would be CPU time plus
         //  GPU time with no overlap - which is why kFramesInFlight is 2.
         //
-        //  The blue is deliberately a mid-brightness colour rather than pure
-        //  blue: a saturated (0,0,255) is easy to mistake for a window the
-        //  compositor did not composite, while something like this is
-        //  unmistakably a cleared render target.
+        //  The vertices are authored so that each output pixel's colour is the
+        //  barycentric mix of red, green and blue - the interpolation is the
+        //  rasteriser's job, this shader is only the endpoint.
         // ---------------------------------------------------------------------
         context_->BeginFrame();
-        context_->ClearRenderTarget(0.05F, 0.20F, 0.60F, 1.0F);
+        context_->ClearRenderTarget(0.08F, 0.08F, 0.10F, 1.0F);
+        context_->SetViewport(static_cast<float>(context_->GetBackBufferWidth()),
+                              static_cast<float>(context_->GetBackBufferHeight()));
+        context_->SetScissorRect();
+
+        auto* commandList = context_->GetCommandList();
+        pipeline_->Bind(commandList);
+
+        D3D12_VERTEX_BUFFER_VIEW vertexBufferView = vertexBuffer_->GetVertexBufferView();
+        commandList->IASetVertexBuffers(0, 1, &vertexBufferView);
+
+        commandList->DrawInstanced(3, 1, 0, 0);
+
         context_->EndFrame();
     }
 
@@ -243,6 +270,58 @@ protected:
     }
 
 private:
+    /// Compiles the shaders into the PSO and places the triangle in an upload
+    /// heap buffer.
+    ///
+    /// @note Both are member-shaped rather than stack locals inside OnStartup:
+    ///       the PSO and the buffer are needed on every frame, and the set
+    ///       keeps the whole graphics side of the Sandbox declared in one
+    ///       place.
+    void CreateTriangleResources()
+    {
+        // ---- the vertex input layout ---------------------------------------
+        //
+        // The contract between the vertex buffer, the input assembler stage,
+        // and the vertex shader. Every D3D12_INPUT_ELEMENT_DESC names one
+        // attribute of one vertex row and where the assembler should read it
+        // from: which semantic index the shader declares, whether it is a
+        // PER_VERTEX_DATA or PER_INSTANCE_DATA field, its offset in the row,
+        // and the row's stride. The order has to match Vertex field order -
+        // this is the array the compiler validates against the HLSL Input
+        // struct, and a layout whose POSITION offset disagrees with the HLSL
+        // struct simply produces a triangle at nonsense coordinates.
+        static const D3D12_INPUT_ELEMENT_DESC kInputLayout[] = {
+            { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT,    0,
+              static_cast<UINT>(offsetof(Nova::Renderer::Vertex, position)),
+              D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+            { "COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0,
+              static_cast<UINT>(offsetof(Nova::Renderer::Vertex, color)),
+              D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        };
+
+        pipeline_ = std::make_unique<Nova::Renderer::D3D12Pipeline>();
+        pipeline_->Create(context_->GetDevice(), L"Shaders/triangle_vs.hlsl",
+                          L"Shaders/triangle_ps.hlsl", kInputLayout,
+                          static_cast<std::uint32_t>(std::size(kInputLayout)));
+
+        // The triangle's three vertices, with one attribute the triangle can
+        // not miss - the colour. Un-transformed clip-space positions placing
+        // the triangle at the centre of the screen: a red apex up, green
+        // bottom-right, blue bottom-left. Each interior pixel's colour is the
+        // interpolation of those three corners, so the gradient is the
+        // rasteriser's linear mix, not something the vertex shader varies per
+        // frame.
+        const std::vector<Nova::Renderer::Vertex> triangle = {
+            { {  0.0F,  0.5F, 0.0F }, { 1.0F, 0.0F, 0.0F, 1.0F } }, // top:    red
+            { {  0.5F, -0.5F, 0.0F }, { 0.0F, 1.0F, 0.0F, 1.0F } }, // right:  green
+            { { -0.5F, -0.5F, 0.0F }, { 0.0F, 0.0F, 1.0F, 1.0F } }, // left:   blue
+        };
+
+        vertexBuffer_ = std::make_unique<Nova::Renderer::D3D12VertexBuffer>(context_->GetDevice(),
+                                                                             triangle);
+    }
+
+private:
     /// Held by unique_ptr, not by value, and the distinction matters.
     ///
     /// A D3D12Context MEMBER would be destroyed after ~SandboxApp runs - and
@@ -256,6 +335,12 @@ private:
     /// and it must be movable into place. That is exactly the contract
     /// unique_ptr was invented for.
     std::unique_ptr<Nova::Renderer::D3D12Context> context_;
+
+    /// Shader pipeline: compiles the HLSL pair and owns the PSO it produces.
+    std::unique_ptr<Nova::Renderer::D3D12Pipeline> pipeline_;
+
+    /// The three vertices of the first triangle, in an upload-heap buffer.
+    std::unique_ptr<Nova::Renderer::D3D12VertexBuffer> vertexBuffer_;
 
     int   frames_     = 0;
     float lastMouseX_ = 0.0F;
