@@ -44,10 +44,12 @@
 #      D3D12Device.cpp         factory, adapter policy, device, capabilities
 #      D3D12CommandQueue.cpp   queue, fence, allocators, command list
 #      D3D12SwapChain.cpp      swap chain, render target views, resize
+#      Pipeline.cpp            shader compile + root signature + PSO
+#      VertexBuffer.cpp        upload-heap vertex buffer + its IA view
 #
 #  Adapter policy changes when a laptop ships with a new GPU. Resize changes
-#  when multi-monitor support lands. The frame loop changes when a command
-#  allocator is needed per render pass. Merging them would mean reading all of
+#  when multi-monitor support lands. Pipeline construction changes whenever an
+#  engine effect ships. Merging them would mean reading all of
 #  that to find any one of it.
 # ===========================================================================
 
@@ -58,13 +60,18 @@ nova_add_module(Renderer
         src/D3D12Device.cpp
         src/D3D12Helpers.cpp
         src/D3D12SwapChain.cpp
+        src/Pipeline.cpp
+        src/VertexBuffer.cpp
     HEADERS
         D3D12Context.h
         D3D12Helpers.h
+        Pipeline.h
+        VertexBuffer.h
     DEPENDS
         Nova::Core
         d3d12
         dxgi
+        d3dcompiler
 )
 
 # ---------------------------------------------------------------------------
