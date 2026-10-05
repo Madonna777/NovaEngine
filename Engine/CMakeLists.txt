@@ -38,17 +38,23 @@
 set(NOVA_PUBLIC_INCLUDE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 
 add_subdirectory(Core)
+add_subdirectory(Renderer)
 
 # ---------------------------------------------------------------------------
 # Remaining modules, in dependency order. Each is added as it lands:
 #
 #   Math/      - no dependencies. Pure CPU math. Testable without a GPU.
-#   Input/     - depends on Core.
-#   Renderer/  - depends on Math, Core. The D3D12 backend.
+#   Renderer/  - depends on Core. The D3D12 backend. DONE.
 #   Scene/     - depends on Math, Core, Renderer (needs GPU-visible buffers).
 #
-# NOTE on ordering: Scene comes after Renderer deliberately. The scene graph
-# needs to allocate from GPU-visible heaps, so letting Scene dictate its own
-# memory model and then having Renderer satisfy it is the wrong direction of
-# dependency. The renderer owns memory; the scene describes what to put in it.
+# NOTE on ordering: Math is not built yet, and Renderer does not need it - a
+# clear takes four floats, not a colour type. The dependency arrives with the
+# first shader, because that is where a float4 in a constant buffer needs to
+# agree with a float4 in a transform. Adding it now would mean an empty module
+# existing solely to be linked.
+#
+# NOTE on Scene: it comes after Renderer deliberately. The scene graph needs to
+# allocate from GPU-visible heaps, so letting Scene dictate its own memory model
+# and then having Renderer satisfy it is the wrong direction of dependency. The
+# renderer owns memory; the scene describes what to put in it.
 # ---------------------------------------------------------------------------

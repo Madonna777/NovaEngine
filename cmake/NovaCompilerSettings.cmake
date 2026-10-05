@@ -45,6 +45,33 @@ function(nova_configure_target target)
     # Only meaningful to Visual Studio, but harmless under Ninja. Makes the IDE
     # group sources under a "Source Files" filter tree instead of a flat list.
     set_target_properties(${target} PROPERTIES FOLDER_HEADERGUARD ON)
+
+    # -----------------------------------------------------------------------
+    # Windows header hygiene
+    # -----------------------------------------------------------------------
+    # PUBLIC, not PRIVATE, and that is the whole subtlety here.
+    #
+    # <windows.h> is banned from engine headers - see Core/Platform.h - but the
+    # D3D12 and DXGI headers include it themselves unless COM_NO_WINDOWS_H is
+    # defined, so Renderer/D3D12Context.h transitively pulls it in. Two macros
+    # make that survivable:
+    #
+    #   NOMINMAX          removes the min()/max() macros, which otherwise
+    #                      redefine std::min and std::max and produce template
+    #                      errors deep inside the engine's own headers
+    #   WIN32_LEAN_AND_MEAN  drops winsock, mmsystem and friends, which is both
+    #                      a large compile-time saving and one fewer header
+    #                      defining macros the engine does not want
+    #
+    # PUBLIC because a consumer of a renderer header must get the same defines
+    # BEFORE it reaches <windows.h>, and CMake cannot order a definition
+    # relative to an #include inside someone else's source file. Making them
+    # PRIVATE would leave every Sandbox.cpp with an inconsistent macro state,
+    # and the resulting std::min failure would appear to be a C++ standard
+    # library problem.
+    if(WIN32)
+        target_compile_definitions(${target} PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
+    endif()
 endfunction()
 
 function(nova_add_module target)
