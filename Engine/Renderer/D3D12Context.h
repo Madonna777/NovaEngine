@@ -227,6 +227,47 @@ public:
     /// @return Whether Present waits for the vertical blank.
     [[nodiscard]] bool IsVSyncEnabled() const noexcept { return vsyncEnabled_; }
 
+    /// @return The device, for code that must create GPU resources itself
+    ///         (the renderer-side D3D12Pipeline and vertex buffers).
+    ///
+    /// WHY EXPOSED RATHER THAN OWNED FROM HERE: every resource that outlives a
+    /// single frame but belongs to one window needs this handle, and creating
+    /// all of them inside the context would mean the context knows about every
+    /// material, mesh and shader permutation. The dependency is one pointer and
+    /// the ownership stays with the caller.
+    [[nodiscard]] ID3D12Device* GetDevice() const noexcept { return device_.Get(); }
+
+    /// @return The command list recorded by the current BeginFrame's
+    ///         reset. Valid between BeginFrame and EndFrame only; using it
+    ///         afterwards is the state bug that bites the most often.
+    [[nodiscard]] ID3D12GraphicsCommandList* GetCommandList() const noexcept
+    {
+        return commandList_.Get();
+    }
+
+    /// Tell the command list which pixel box a clip-space unit square lands on.
+    ///
+    /// @note Recorded, not immediate: the command list remembers it until the
+    ///       next reset. Without this the first ClearRenderTarget in a command
+    ///       list counts against a 0-sized viewport and produces nothing.
+    void SetViewport(float width, float height) const;
+
+    /// Clips the command list to a sub-rectangle of the back buffer.
+    ///
+    /// @note Both RSSetViewports and RSSetScissorRects are required before a
+    ///       draw: a viewport without a scissor means the GPU writes everywhere
+    ///       in the box, including the parts that must stay "outside the window".
+    void SetScissorRect(std::uint32_t x, std::uint32_t y, std::uint32_t width, std::uint32_t height) const;
+
+    /// Clips to the full back buffer - the normal case.
+    void SetScissorRect() const { SetScissorRect(0, 0, backBufferWidth_, backBufferHeight_); }
+
+    /// (Re)creates the RTV descriptor heap and one view per back buffer, and
+    /// drops the previous one. Called by CreateSwapChain and on resize. Public
+    /// for code that allocates its own render-target views against the same
+    /// heap: shader resources follow the same descriptor-slot discipline.
+    void CreateDefaultRenderTarget();
+
 private:
     // ---- construction steps, one translation unit each --------------------
 
@@ -242,11 +283,6 @@ private:
 
     /// Creates the flip-model swap chain for the window at the given size.
     void CreateSwapChain(std::uint32_t width, std::uint32_t height);
-
-    /// Creates the RTV descriptor heap and one render target view per back
-    /// buffer. Rebuilt on resize, because a view describes a specific buffer and
-    /// ResizeBuffers replaces them.
-    void CreateRenderTargetViews();
 
     // ---- per-frame helpers ------------------------------------------------
 

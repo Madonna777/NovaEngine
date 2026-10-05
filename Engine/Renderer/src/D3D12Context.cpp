@@ -186,23 +186,38 @@ void D3D12Context::BeginFrame()
     // ---- 6. point at this buffer's render target view --------------------
     //
     // The RTV is not recreated per frame. The heap has one slot per back buffer,
-    // created once in CreateRenderTargetViews, and the per-frame cost is one
+    // created once in CreateDefaultRenderTarget, and the per-frame cost is one
     // pointer addition. Recreating views every frame would work and would be
     // pure waste - descriptor creation is one of the more expensive things the
     // render loop does.
     const D3D12_CPU_DESCRIPTOR_HANDLE heapStart = rtvHeap_->GetCPUDescriptorHandleForHeapStart();
     currentRtvDescriptor_ =
         OffsetCpu(heapStart, backBufferIndex_, rtvDescriptorStride_);
+
+    // ---- 6b. transition the acquired buffer to a renderable state ----------
+    //
+    // DXGI hands back the buffer in the PRESENT state: read-only for the
+    // compositor, unusable for a pipeline that writes to it. D3D12 does not
+    // hide this. The RTV clear below is recorded against a buffer the GPU may
+    // still be presenting, which is the de-facto "black screen because nothing
+    // executed properly" bug. The barrier declares the state change to the GPU
+    // before the first recorded command touches the buffer.
+    D3D12_RESOURCE_BARRIER barrier{};
+    barrier.Type                     = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barrier.Transition.pResource     = currentBackBuffer_.Get();
+    barrier.Transition.StateBefore   = D3D12_RESOURCE_STATE_PRESENT;
+    barrier.Transition.StateAfter    = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    barrier.Transition.Subresource   = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    commandList_->ResourceBarrier(1, &barrier);
 }
 
 void D3D12Context::ClearRenderTarget(float red, float green, float blue, float alpha)
 {
     const float colour[4] = { red, green, blue, alpha };
 
-    // The parameter is a POINTER TO the handle, and it must be a mutable local:
-    // OMSetRenderTargets may write through it, and the signature says so.
-    // Passing &currentRtvDescriptor_ directly is not equivalent - the member is
-    // const in this context and would not compile.
+    // OMSetRenderTargets takes a POINTER to the handle array. The temporary
+    // copy keeps the member read-only here and makes "the command list owns its
+    // own copy once this returns" explicit to the reader.
     D3D12_CPU_DESCRIPTOR_HANDLE target = currentRtvDescriptor_;
 
     // Bind first. ClearRenderTargetView does not require the view to be bound -
@@ -222,8 +237,46 @@ void D3D12Context::ClearRenderTarget(float red, float green, float blue, float a
     commandList_->ClearRenderTargetView(target, colour, 0, nullptr);
 }
 
+void D3D12Context::SetViewport(float width, float height) const
+{
+    // RSSetViewports is a recorded command, like the barrier: the command list
+    // carries it through BeginFrame/EndFrame until something changes it. A
+    // viewport without a matching scissor leaves a gap the rasteriser is free
+    // to fill, and the symptom is pixels outside the intended box - hence the
+    // note on SetScissorRect.
+    const D3D12_VIEWPORT viewport{ 0.0F, 0.0F, width, height, 0.0F, 1.0F };
+    commandList_->RSSetViewports(1, &viewport);
+}
+
+void D3D12Context::SetScissorRect(std::uint32_t x, std::uint32_t y, std::uint32_t width,
+                                  std::uint32_t height) const
+{
+    // The rect is what the GPU is allowed to write. Anything outside it is
+    // clipped before the rasteriser reaches a pixel, which makes it strictly
+    // stronger than the viewport's NDC-to-pixel box for content that must
+    // never spill: use both.
+    const D3D12_RECT rect{ static_cast<LONG>(x), static_cast<LONG>(y),
+                           static_cast<LONG>(x + width), static_cast<LONG>(y + height) };
+    commandList_->RSSetScissorRects(1, &rect);
+}
+
 void D3D12Context::EndFrame()
 {
+    // ---- 6c. transition the buffer back to compositor-owned ---------------
+    //
+    // Present requires the buffer in the PRESENT state, which the clear and any
+    // draw calls in between have ended the buffer in RENDER_TARGET. The GPU
+    // queue preserves command order, so this barrier retires the render target
+    // writes that BeginFrame and the draw section submitted before the next
+    // Present takes ownership.
+    D3D12_RESOURCE_BARRIER barrier{};
+    barrier.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barrier.Transition.pResource   = currentBackBuffer_.Get();
+    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    barrier.Transition.StateAfter  = D3D12_RESOURCE_STATE_PRESENT;
+    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    commandList_->ResourceBarrier(1, &barrier);
+
     // ---- 7. close: recording -> executable -------------------------------
     //
     // A command list has two states, and every method above only works in

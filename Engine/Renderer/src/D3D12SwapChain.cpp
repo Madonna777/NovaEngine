@@ -143,14 +143,14 @@ void D3D12Context::CreateSwapChain(std::uint32_t width, std::uint32_t height)
     rtvDescriptorStride_ =
         device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
-    CreateRenderTargetViews();
+    CreateDefaultRenderTarget();
 
     NOVA_INFO("Swap chain: {}x{} {} ({} buffers, RTV stride {} bytes)", width, height,
               backBufferFormat_ == DXGI_FORMAT_R8G8B8A8_UNORM ? "R8G8B8A8" : "other",
               kSwapBufferCount, rtvDescriptorStride_);
 }
 
-void D3D12Context::CreateRenderTargetViews()
+void D3D12Context::CreateDefaultRenderTarget()
 {
     // ---- the heap --------------------------------------------------------
     //
@@ -268,7 +268,7 @@ void D3D12Context::ResizeIfClientAreaChanged()
     // The views referenced the old buffers, so they are rebuilt. The heap is
     // recreated rather than overwritten: its descriptor count is unchanged, but
     // creating it fresh leaves no stale view behind if the count ever differs.
-    CreateRenderTargetViews();
+    CreateDefaultRenderTarget();
 
     // Updated LAST, after every call that could throw. A failed resize leaves
     // the cached size describing what the swap chain still is, so the next frame
