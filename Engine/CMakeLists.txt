@@ -40,22 +40,19 @@ set(NOVA_PUBLIC_INCLUDE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 add_subdirectory(Core)
 add_subdirectory(Math)
 add_subdirectory(Renderer)
+add_subdirectory(Scene)
 
 # ---------------------------------------------------------------------------
 # Remaining modules, in dependency order. Each is added as it lands:
 #
-#   Math/      - no dependencies. Pure CPU math. Testable without a GPU. DONE.
+#   Math/      - no dependencies. Pure CPU math. DONE.
 #   Renderer/  - depends on Core. The D3D12 backend. DONE.
 #   Scene/     - depends on Math, Core, Renderer (needs GPU-visible buffers).
+#                Uses Core + Math for the camera stack; Renderer wiring arrives
+#                when the first scene-bound draw ships. DONE (camera-only).
 #
-# NOTE on Math: implemented after the Renderer, even though the module list is
-# ordered the other way. Renderer originally hard-coded clip-space positions in
-# shader source; an MVP-driven draw needs the math types to agree, and the Math
-# module ships first while the HUD harness for it is still being designed in
-# the Sandbox.
-#
-# NOTE on Scene: it comes after Renderer deliberately. The scene graph needs to
-# allocate from GPU-visible heaps, so letting Scene dictate its own memory model
-# and then having Renderer satisfy it is the wrong direction of dependency. The
-# renderer owns memory; the scene describes what to put in it.
+# NOTE on Scene depending on Core only: Scene includes Window and EventDispatcher
+# from Core because a controller needs the window to capture the cursor and to
+# hear resize events. It does NOT include any D3D12 header - camera matrices are
+# consumed by the Renderer, not the other way round.
 # ---------------------------------------------------------------------------
