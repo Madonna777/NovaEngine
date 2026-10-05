@@ -86,11 +86,15 @@ Window::Window(WindowProperties properties)
 
     SetVSync(properties_.vsync);
 
-    // Registers this Window with the OS so callbacks can map a GLFWwindow*
-    // back to it. Must happen before any callback can fire, and there are no
-    // callbacks yet - the engine polls input - so there is no window of
-    // opportunity for an event to arrive with a null user pointer.
+    // The user pointer ties a GLFWwindow* back to this Window during callback
+    // delivery. Set it BEFORE any callback can fire so an event never hits a
+    // null pointer. The engine also polls via Input, but the callbacks below
+    // carry every event the dispatcher delivers.
     glfwSetWindowUserPointer(handle_, this);
+
+    // Callbacks are registered after the user pointer is installed: every
+    // GLFW callback resolves the Window from it, so ordering is load-bearing.
+    InstallEventCallbacks();
 
     NOVA_INFO("Window created: '{}' {}x{} vsync={}", properties_.title,
               properties_.width, properties_.height, properties_.vsync);
@@ -315,17 +319,108 @@ double Window::GetTimeSeconds() const
     return glfwGetTime();
 }
 
-void Window::SetUserPointer(void* pointer) noexcept
+// ===========================================================================
+//  GLFW callback bridge - the fan-out into EventDispatcher
+// ===========================================================================
+
+Window* Window::FromGlfwWindow(GLFWwindow* window) noexcept
 {
-    if (handle_ != nullptr)
+    return static_cast<Window*>(glfwGetWindowUserPointer(window));
+}
+
+void Window::InstallEventCallbacks()
+{
+    // WHY THE REPEAT IS KEYPRESSED: GLFW fires GLFW_REPEAT for held keys. A
+    // polled Input::IsKeyDown covers the held state; the bus only needs edge events, so
+    // PRESS and REPEAT are the same KeyPressed. Notifying on every key repeat
+    // would either double-trigger Shutdown() or force every subscriber to
+    // throttle itself. The keyboard state for "is it held" remains the polled
+    // Input facade - events are edges, Input is levels.
+    glfwSetKeyCallback(handle_, &Window::OnGlfwKey);
+
+    // Moves are reported regardless of whether the cursor is visible: the FPS
+    // controller hides it and keeps consuming deltas, so both paths need the
+    // same event data.
+    glfwSetCursorPosCallback(handle_, &Window::OnGlfwCursorPosition);
+    glfwSetMouseButtonCallback(handle_, &Window::OnGlfwMouseButton);
+    glfwSetWindowSizeCallback(handle_, &Window::OnGlfwWindowSize);
+    glfwSetWindowCloseCallback(handle_, &Window::OnGlfwWindowClose);
+}
+
+void Window::OnGlfwKey(GLFWwindow* window, int key, int scancode, int action, int mods)
+{
+    if (Window* self = FromGlfwWindow(window); self != nullptr)
     {
-        glfwSetWindowUserPointer(handle_, pointer);
+        Event event;
+        event.type = (action == GLFW_RELEASE) ? EventType::KeyReleased : EventType::KeyPressed;
+        event.data = KeyEvent{ key, scancode, mods };
+        self->dispatcher_.Dispatch(event);
     }
 }
 
-void* Window::GetUserPointer() const noexcept
+void Window::OnGlfwCursorPosition(GLFWwindow* window, double xpos, double ypos)
 {
-    return handle_ != nullptr ? glfwGetWindowUserPointer(handle_) : nullptr;
+    if (Window* self = FromGlfwWindow(window); self != nullptr)
+    {
+        // delta = current - last, and the first move after construction or
+        // re-acquire has no last - treating (0,0) as "last" would produce a
+        // cursor-frozen-at-corner-followed-by-a-huge-delta artifact. Gating on
+        // the flag means the first event reports a zero delta, which is the
+        // honest answer for a line that has not moved yet.
+        const float x = static_cast<float>(xpos);
+        const float y = static_cast<float>(ypos);
+
+        float deltaX = 0.0F;
+        float deltaY = 0.0F;
+        if (self->hasMousePosition_)
+        {
+            deltaX = x - self->lastMouseX_;
+            deltaY = y - self->lastMouseY_;
+        }
+
+        self->lastMouseX_      = x;
+        self->lastMouseY_      = y;
+        self->hasMousePosition_ = true;
+
+        Event event;
+        event.type = EventType::MouseMoved;
+        event.data = MouseMoveEvent{ x, y, deltaX, deltaY };
+        self->dispatcher_.Dispatch(event);
+    }
+}
+
+void Window::OnGlfwMouseButton(GLFWwindow* window, int button, int action, int mods)
+{
+    if (Window* self = FromGlfwWindow(window); self != nullptr)
+    {
+        Event event;
+        event.type =
+            (action == GLFW_RELEASE) ? EventType::MouseButtonReleased : EventType::MouseButtonPressed;
+        event.data = MouseButtonEvent{ button, mods };
+        self->dispatcher_.Dispatch(event);
+    }
+}
+
+void Window::OnGlfwWindowSize(GLFWwindow* window, int width, int height)
+{
+    if (Window* self = FromGlfwWindow(window); self != nullptr)
+    {
+        Event event;
+        event.type = EventType::WindowResize;
+        event.data = WindowResizeEvent{ width, height };
+        self->dispatcher_.Dispatch(event);
+    }
+}
+
+void Window::OnGlfwWindowClose(GLFWwindow* window)
+{
+    if (Window* self = FromGlfwWindow(window); self != nullptr)
+    {
+        Event event;
+        event.type = EventType::WindowClose;
+        event.data = WindowCloseEvent{};
+        self->dispatcher_.Dispatch(event);
+    }
 }
 
 } // namespace Nova

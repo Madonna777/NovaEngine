@@ -48,6 +48,7 @@ nova_add_module(Core
     HEADERS
         Application.h
         Assert.h
+        EventSystem.h
         GlfwRuntime.h
         Handle.h
         HandleRegistry.h

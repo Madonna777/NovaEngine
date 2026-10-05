@@ -42,6 +42,7 @@
 #pragma once
 
 #include <Core/Assert.h>
+#include <Core/EventSystem.h>
 
 #include <cstdint>
 #include <functional>
@@ -159,6 +160,22 @@ public:
     //  Sizing them in logical pixels instead is a bug that looks correct on a
     //  100% display and produces a window a fifth too small everywhere else.
 
+    // -----------------------------------------------------------------------
+    //  Events
+    // -----------------------------------------------------------------------
+
+    /// @return The dispatcher driving this window's event delivery. Subscribers
+    ///         register, and PumpEvents() then fires their callbacks from the
+    ///         GLFW callback machinery running on the main thread. Ownership
+    ///         stays with the Window: the returned reference is valid for as
+    ///         long as this Window is alive.
+    ///
+    /// WHY OWNED BY Window NOT BY a global: event delivery is tied to GLFW's
+    /// window pointer and pumping pump, which are window-scoped. The callbacks
+    /// dispatch INTO dispatcher_, and two windows must not share one handler bag.
+    [[nodiscard]] EventDispatcher& GetEventDispatcher() noexcept { return dispatcher_; }
+    [[nodiscard]] const EventDispatcher& GetEventDispatcher() const noexcept { return dispatcher_; }
+
     void SetTitle(std::string_view title);
     [[nodiscard]] std::string GetTitle() const;
 
@@ -187,21 +204,6 @@ public:
     ///         clock. Independent of wall-clock adjustments, unlike
     ///         std::chrono::system_clock.
     [[nodiscard]] double GetTimeSeconds() const;
-
-    // -----------------------------------------------------------------------
-    //  User pointer
-    // -----------------------------------------------------------------------
-
-    /// Opaque per-window scratch slot, for the platform callbacks to hand a
-    /// context back to the engine.
-    ///
-    /// @note Stored on the GLFWindow itself rather than in a map. The callback
-    ///       receives a GLFWwindow*, and the only way back from that pointer to
-    ///       a Window is either a lookup keyed by the handle - a hash map
-    ///       consulted per event, on the hot path - or one pointer field the
-    ///       platform already provides for exactly this.
-    void  SetUserPointer(void* pointer) noexcept;
-    [[nodiscard]] void* GetUserPointer() const noexcept;
 
     /// @return The underlying GLFW handle, for code that must call GLFW directly
     ///         (a tool, or an editor embedding the window in its own host).
@@ -232,12 +234,38 @@ public:
     [[nodiscard]] void* GetNativeHandle() const noexcept;
 
 private:
+    // GLFW callback wire-up. Private: only Window may route events into its own
+    // dispatcher, and these are alias-typed with the equivalent GLFW callback
+    // signatures, so exposing them would let callers hijack the fan-out midway
+    // through a frame.
+    static Window* FromGlfwWindow(GLFWwindow* window) noexcept;
+    static void OnGlfwKey(GLFWwindow* window, int key, int scancode, int action, int mods);
+    static void OnGlfwCursorPosition(GLFWwindow* window, double xpos, double ypos);
+    static void OnGlfwMouseButton(GLFWwindow* window, int button, int action, int mods);
+    static void OnGlfwWindowSize(GLFWwindow* window, int width, int height);
+    static void OnGlfwWindowClose(GLFWwindow* window);
+
     /// Installs the process-global error callback and asserts the initial
     /// creation actually succeeded.
     void VerifyCreated();
 
+    /// Registers the five GLFW callbacks that fan into the EventDispatcher.
+    void InstallEventCallbacks();
+
     GLFWwindow*    handle_ = nullptr;
     WindowProperties properties_;
     bool            vsyncRequested_ = true;
+
+    /// Owns event delivery for this window. Callbacks written below read the
+    /// user pointer and dispatch here; see GetEventDispatcher for why it is a
+    /// member rather than a service.
+    EventDispatcher dispatcher_;
+
+    /// Previous cursor position used to compute raw deltas for MouseMoveEvent.
+    /// hasMousePosition_ gates the first real span so the initial jump from
+    /// (0,0) does not arrive as an 800-pixel lurch.
+    float lastMouseX_ = 0.0F;
+    float lastMouseY_ = 0.0F;
+    bool  hasMousePosition_ = false;
 };
 } // namespace Nova
