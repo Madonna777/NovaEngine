@@ -128,19 +128,31 @@ int Application::Run()
             deltaTime_ = std::min(elapsed, properties_.maxDeltaSeconds);
 
             // Order is fixed and load-bearing:
-            //   1. Pump events  - delivers input state, and sets ShouldClose when
-            //                      the user clicks the title-bar X.
-            //   2. Update input - latches that state and computes the edges
+            //   1. Pump events   - delivers input state, and sets ShouldClose
+            //                      when the user clicks the title-bar X.
+            //   2. Update input  - latches that state and computes the edges
             //                      against last frame. Must be after (1) or the
             //                      input is one frame stale.
-            //   3. OnUpdate    - the application's own work.
-            //   4. Present     - no-op until the renderer owns a swap chain, but
-            //                      the call site exists now so adding the swap
-            //                      chain is a one-line change, not a restructure.
+            //   3. OnUpdate      - the application's own work.
+            //   4. OnRenderFrame - draws and presents, if it renders at all.
+            //
+            // (4) REPLACED Window::Present(). That call existed as a documented
+            // placeholder for a present that did not exist, so the loop had a
+            // "the frame is over" call site before anything could draw. Now
+            // that the renderer owns a real swap chain, Present is a method on
+            // IDXGISwapChain and the hook below is where it belongs. Leaving the
+            // placeholder in would have meant a no-op called every frame next to
+            // a no-op one that does the real work - which is how two answers to
+            // "what presents the frame?" end up in the same codebase.
+            //
+            // (4) IS LAST, AFTER OnUpdate, because that is where the frame's
+            // work belongs. The seam documented on OnRenderFrame covers the one
+            // case where this order is not yet right: recording into a command
+            // list from OnUpdate needs the list open first.
             window_.PumpEvents();
             Input::Update(window_);
             OnUpdate(deltaTime_);
-            window_.Present();
+            OnRenderFrame();
 
             ++frameIndex_;
             ++framesThisSecond;

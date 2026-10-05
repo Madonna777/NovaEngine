@@ -15,6 +15,31 @@
 
 #include <GLFW/glfw3.h>
 
+// Native Win32 access, for glfwGetWin32Window alone.
+//
+// WHY THE DEFINE AND A SECOND HEADER: GLFW deliberately keeps every platform
+// type behind its own API. glfw3native.h declares glfwGetWin32Window only when
+// GLFW_EXPOSE_NATIVE_WIN32 is defined first, because a program that never asks
+// for native handles should not pay for <windows.h> and its macro definitions -
+// the min/max problem being the one this engine cares about most. So the opt-in
+// is explicit here rather than global.
+//
+// WHY THIS FILE MAY HAVE IT AT ALL, given that <windows.h> is confined to .cpp
+// files (see Platform.h): the rule exists so that a HEADER can never drag
+// windows.h into a translation unit that includes <algorithm>. This is a .cpp,
+// it defines NOMINMAX and WIN32_LEAN_AND_MEAN already (both are also set by
+// nova_configure_target for every target), and no engine header sees any of it.
+// GetNativeHandle returns void* precisely so the HWND type stops here.
+//
+// WHY THE #ifndef GUARD: window handle types must agree across every
+// translation unit, and GLFW's exposure macros are header-visible state. Setting
+// it unconditionally is also fine, but a guarded define says "already decided
+// somewhere above" instead of silently agreeing by luck.
+#ifndef GLFW_EXPOSE_NATIVE_WIN32
+#define GLFW_EXPOSE_NATIVE_WIN32
+#endif
+#include <GLFW/glfw3native.h>
+
 namespace Nova
 {
 Window::Window(WindowProperties properties)
@@ -119,24 +144,29 @@ void Window::PumpEvents()
     glfwPollEvents();
 }
 
-void Window::Present()
+void* Window::GetNativeHandle() const noexcept
 {
     if (handle_ == nullptr)
     {
-        return;
+        return nullptr;
     }
 
-    // WHY THERE IS NO glfwSwapBuffers CALL
-    // ------------------------------------
-    // glfwSwapBuffers presents a GL drawing buffer. Our window is created with
-    // GLFW_CLIENT_API = GLFW_NO_API, so no such buffer exists and the call
-    // would be undefined behaviour on a window with no context.
+    // glfwGetWin32Window is the single place the engine unwraps GLFW's Win32
+    // window, which is the only reason this method can return void* safely.
     //
-    // Presentation is therefore not this class's job: the D3D12 renderer will
-    // call IDXGISwapChain::Present() on a DXGI swap chain bound to this window's
-    // HWND, and that - not GLFW - is what puts pixels on screen. Keeping the
-    // call out now means the renderer never has to work around a stray GL
-    // present, and this method stays the single "frame is over" call site.
+    // WHY NOT glfwGetX11Window / wl_display / whatever: this engine targets
+    // Windows x64 and compiles nowhere else. A platform #ifdef here would be
+    // dead code that still has to compile on a platform with no GLFW build,
+    // which is the usual reason platform #ifdefs cost more than they save. If a
+    // second platform ever lands, this returns nullptr there and every caller
+    // already has to check - because the return type says "there might not be
+    // one".
+    //
+    // @note The returned HWND is owned by GLFW and dies with the window. DXGI
+    //       takes its own reference to it when a swap chain is created, but
+    //       D3D12Context also reads it per frame for the resize check - which is
+    //       why a context must be destroyed before the Window.
+    return glfwGetWin32Window(handle_);
 }
 
 bool Window::ShouldClose() const

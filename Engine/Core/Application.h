@@ -141,6 +141,35 @@ protected:
     ///       and the Sandbox is the cheapest possible example of one.
     virtual void OnUpdate(float deltaTime) = 0;
 
+    /// Called once per frame, after OnUpdate, to draw and present the frame.
+    ///
+    /// @note Empty by default, and that default is load-bearing. Core does not
+    ///       know whether a program renders, has a headless mode, or draws
+    ///       through a completely different backend, and a hook it must
+    ///       implement would force an answer. A subclass with no renderer
+    ///       inherits the no-op and never mentions it again.
+    ///
+    /// WHY THE LOOP CALLS A HOOK INSTEAD OF OWNING A RENDERER
+    /// -------------------------------------------------------
+    /// The obvious implementation is for this class to hold a D3D12Context,
+    /// create it in OnStartup and call BeginFrame / ClearRenderTarget / EndFrame
+    /// itself. That is also a module dependency from Core to Renderer, and
+    /// Engine/Renderer/CMakeLists.txt explains why the cycle it creates is not
+    /// hypothetical. The hook produces the identical frame order - begin, clear,
+    /// end, every frame - with the dependency running one way instead of two,
+    /// and the subclass that actually renders is the one that already has to
+    /// link Renderer.
+    ///
+    /// @note KNOWN SEAM, DELIBERATE: this is ONE hook, not a Begin/End pair, so
+    ///       the command list is closed by the same call that opened it. When
+    ///       gameplay needs to record into the command list from OnUpdate - and
+    ///       it will, the first time anything is drawn - this splits into
+    ///       OnBeginFrame() and OnEndFrame() around OnUpdate. That is a
+    ///       mechanical change to this header, this loop and one Sandbox
+    ///       override. Doing it now would mean every application writes an empty
+    ///       override pair for a renderer feature that does not exist yet.
+    virtual void OnRenderFrame() {}
+
     /// Called once after the window exists and before the first OnUpdate.
     ///
     /// @note The place to create GPU resources. Doing it here rather than in

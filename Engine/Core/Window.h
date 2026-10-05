@@ -112,10 +112,6 @@ public:
     /// close, minimise and resize, and the app appears to hang.
     void PumpEvents();
 
-    /// Presents the back buffer and, when VSync is on, blocks until the
-    /// vertical blank. Call last in the frame.
-    void Present();
-
     /// @return True once the user asked to close - the title-bar X, Alt+F4, or
     ///         a call to RequestClose(). The main loop polls this.
     [[nodiscard]] bool ShouldClose() const;
@@ -207,10 +203,33 @@ public:
     void  SetUserPointer(void* pointer) noexcept;
     [[nodiscard]] void* GetUserPointer() const noexcept;
 
-    /// @return The underlying handle, for code that must call GLFW directly
-    ///         (the renderer's swap-chain creation). Null only after the
-    ///         destructor has run, which cannot happen on a live Window.
+    /// @return The underlying GLFW handle, for code that must call GLFW directly
+    ///         (a tool, or an editor embedding the window in its own host).
+    ///         Null only after the destructor has run, which cannot happen on a
+    ///         live Window.
     [[nodiscard]] GLFWwindow* GetHandle() const noexcept { return handle_; }
+
+    /// @return The native Win32 HWND for this window, or nullptr if the platform
+    ///         has no such concept.
+    ///
+    /// WHY THIS EXISTS: DXGI presents into an HWND and nothing else. There is no
+    /// flip-model swap chain for an abstract window handle, and no way to hand
+    /// GLFW's window to D3D12 without unwrapping it - which is exactly what this
+    /// does, once, in the one file that talks to both libraries.
+    ///
+    /// WHY void* AND NOT HWND: Core's rule is that <windows.h> never appears in
+    /// an engine header (see Platform.h), and naming the type here would break
+    /// it. The alternative - a renderer-specific accessor - would mean a module
+    /// dependency to return one pointer. void* keeps the platform boundary in
+    /// the signature, so a reader can see that this is an escape hatch rather
+    /// than part of the window's own vocabulary, and the renderer casts it once
+    /// at the call site.
+    ///
+    /// @note Ownership stays with this Window. Destroying the Window destroys
+    ///       the HWND, and any D3D12Context created from this handle must be
+    ///       destroyed first - which is why Application::OnShutdown, not the
+    ///       destructor, is the documented place to tear a renderer down.
+    [[nodiscard]] void* GetNativeHandle() const noexcept;
 
 private:
     /// Installs the process-global error callback and asserts the initial
