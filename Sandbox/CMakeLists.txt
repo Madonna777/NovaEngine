@@ -20,7 +20,12 @@
 # with the renderer's GLFW window, where there is a window to justify it.
 add_executable(Sandbox src/main.cpp)
 
-target_link_libraries(Sandbox PRIVATE Nova::Core)
+# WHY TWO LINKS AND NOT ONE: Sandbox is the executable, so it is where the
+# decision to render through D3D12 is actually made. Nova::Renderer already links
+# Nova::Core transitively, but naming Core here too keeps the direct dependency
+# visible - if the Renderer ever stopped depending on Core, Sandbox would still
+# be honest about the fact that it logs through it.
+target_link_libraries(Sandbox PRIVATE Nova::Core Nova::Renderer)
 
 # ---------------------------------------------------------------------------
 #  SHADERS

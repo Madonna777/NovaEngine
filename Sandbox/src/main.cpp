@@ -1,22 +1,29 @@
 // ===========================================================================
 //  main.cpp - Sandbox
 // ---------------------------------------------------------------------------
-//  Smoke test for the window / input / main-loop layer.
+//  Smoke test for the window / input / main-loop / D3D12 layer.
 //
 //  WHAT THIS PROVES, AND WHAT IT DOES NOT
 //  --------------------------------------
-//  Running this to completion demonstrates five things a unit test cannot:
-//  GLFW initialises in this session, a real HWND is created and shown, the
-//  frame loop runs at a sane rate, input polling reaches the keyboard and
-//  mouse, and the whole thing tears down without leaking a window or hanging
-//  at exit.
+//  Running this to completion demonstrates six things a unit test cannot:
+//  GLFW initialises in this session, a real HWND is created and shown, the D3D12
+//  device comes up on a chosen adapter, a flip-model swap chain presents a frame
+//  that survives the fence round trip, input polling reaches the keyboard and
+//  mouse, and the whole thing tears down without leaking a window or hanging at
+//  exit.
 //
-//  It does NOT demonstrate rendering. Nothing is drawn: there is no swap chain,
-//  so the client area shows whatever the window manager paints there - and a
-//  PrintWindow capture of a running Sandbox put 255,255,255 at 93% of sampled
-//  pixels, so that is white, not the black this was originally specified to
-//  show. It is the renderer's job, and faking it with a Win32 black class brush
-//  would be a hack to delete in a day. The D3D12 swap chain makes it moot.
+//  The window is now BLUE rather than the white this milestone started with. A
+//  PrintWindow capture of the previous Sandbox put 255,255,255 at 93% of sampled
+//  pixels: with no swap chain nothing is cleared, so the client area showed the
+//  Win32 window-class background. The blue is a real clear submitted through a
+//  real command list, and it is what proves the whole path works rather than
+//  that a brush was set.
+//
+//  It does NOT demonstrate anything drawn. The clear below is one command
+//  recorded by the CPU and executed by the GPU; there is no pipeline state, no
+//  vertex buffer, and no shader. A triangle is the next milestone, and the
+//  interesting parts of it - root signatures, PSOs, the per-draw path - are not
+//  exercised by anything here.
 //
 //  The demos below are ordered by how much they are worth reading.
 // ===========================================================================
@@ -25,15 +32,17 @@
 #include <Core/Input.h>
 #include <Core/KeyCodes.h>
 #include <Core/Log.h>
+#include <Renderer/D3D12Context.h>
 
 #include <cmath>
+#include <cstdint>
 #include <exception>
 
 namespace
 {
 /// The application's own behaviour. Window, loop, timing and teardown are all
 /// inherited, which is the entire reason Application exists: a concrete
-/// executable becomes one method instead of a copy of the loop.
+/// executable becomes two methods instead of a copy of the loop.
 ///
 /// @note An automatic object on main()'s stack, not a static. The base class
 ///       holds a Window, and a static would construct it during static
@@ -48,8 +57,45 @@ protected:
     void OnStartup() override
     {
         NOVA_CLIENT_INFO("Sandbox startup");
-        NOVA_CLIENT_INFO("Window: {}x{} vsync={}", GetWindow().GetWidth(),
-                         GetWindow().GetHeight(), GetWindow().IsVSyncEnabled());
+        NOVA_CLIENT_INFO("Window: {}x{} vsync={}", GetWindow().GetWidth(), GetWindow().GetHeight(),
+                         GetWindow().IsVSyncEnabled());
+
+        // ---------------------------------------------------------------------
+        //  Device creation.
+        //
+        //  HERE, NOT IN THE CONSTRUCTOR, and not in OnRenderFrame either. Two
+        //  reasons, both about ordering:
+        //
+        //    - The HWND must already exist. DXGI's CreateSwapChainForHwnd
+        //      binds to a live window, and creating a device first and the
+        //      window second would mean tearing the swap chain down and building
+        //      it again. Application's contract puts OnStartup after window
+        //      creation for exactly this.
+        //
+        //    - It must be BEFORE the first frame, not inside it. Device
+        //      creation is the slowest thing the engine does that is not a
+        //      shader compile, and doing it lazily turns a startup cost into a
+        //      one-frame hitch that is very hard to attribute later.
+        //
+        //  The sizes come from the window, in PHYSICAL pixels. GetSize() is
+        //  physical because GLFW sets PER_MONITOR_AWARE_V2 - see the DPI note in
+        //  Core/Window.h. On this machine, which runs at 125% scaling, a logical
+        //  pixel count here would produce a back buffer 1280x576 for a 1280x720
+        //  window: stretched, and one fifth short on both axes.
+        const auto [width, height] = GetWindow().GetSize();
+
+        context_ = std::make_unique<Nova::Renderer::D3D12Context>(
+            static_cast<HWND>(GetWindow().GetNativeHandle()),
+            static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height),
+            GetWindow().IsVSyncEnabled());
+
+        NOVA_CLIENT_INFO("D3D12 initialized successfully");
+        NOVA_CLIENT_INFO("  adapter: {}", context_->GetAdapterName());
+        NOVA_CLIENT_INFO("  back buffer: {}x{} in {} slots, {} MB dedicated VRAM",
+                         context_->GetBackBufferWidth(), context_->GetBackBufferHeight(),
+                         Nova::Renderer::D3D12Context::kSwapBufferCount,
+                         context_->GetDedicatedVideoMemoryBytes() / (1024ULL * 1024ULL));
+
         NOVA_CLIENT_INFO("Press Escape to close");
     }
 
@@ -103,8 +149,8 @@ protected:
         const auto [mouseX, mouseY] = Nova::Input::GetMousePosition();
         if (std::fabs(mouseX - lastMouseX_) > 1.0F || std::fabs(mouseY - lastMouseY_) > 1.0F)
         {
-            NOVA_CLIENT_INFO("Mouse at ({:.0f}, {:.0f}) - client-relative, +Y is down",
-                             mouseX, mouseY);
+            NOVA_CLIENT_INFO("Mouse at ({:.0f}, {:.0f}) - client-relative, +Y is down", mouseX,
+                             mouseY);
             lastMouseX_ = mouseX;
             lastMouseY_ = mouseY;
         }
@@ -113,32 +159,104 @@ protected:
         //  Demo 4: the argument and the accessor are the same value.
         //
         //  OnUpdate's parameter and GetDeltaTime() must never disagree - an
-        //  engine service reached from a subclass reads the accessor, and if
-        //  the two were computed from different clocks the simulation would
-        //  step by one value while the renderer animated by another. The
-        //  branch below is unreachable by construction; the check is here so a
-        //  future refactor that breaks the invariant fails loudly in the
-        //  Sandbox rather than subtly in a physics bug.
+        //  engine service reached from a subclass reads the accessor, and if the
+        //  two were computed from different clocks the simulation would step by
+        //  one value while the renderer animated by another. The branch below is
+        //  unreachable by construction; the check is here so a future refactor
+        //  that breaks the invariant fails loudly in the Sandbox rather than
+        //  subtly in a physics bug.
+        //
+        //  This matters MORE now that a renderer exists. The frame rate is
+        //  measured against real GPU work, so a delta time that disagreed with
+        //  the one the simulation used would show up as animation running at the
+        //  wrong speed rather than as a number that looks wrong.
         // ---------------------------------------------------------------------
         if (deltaTime != GetDeltaTime())
         {
-            NOVA_CLIENT_ERROR("Delta time mismatch: argument {} vs accessor {}",
-                              deltaTime, GetDeltaTime());
+            NOVA_CLIENT_ERROR("Delta time mismatch: argument {} vs accessor {}", deltaTime,
+                              GetDeltaTime());
         }
 
         ++frames_;
     }
 
+    void OnRenderFrame() override
+    {
+        if (!context_)
+        {
+            // Only reachable if device creation threw out of OnStartup, and
+            // Application catches that, shuts down, and never enters the loop.
+            // Checked anyway: a null dereference in the frame loop is a much
+            // worse diagnostic than a one-line log.
+            NOVA_CLIENT_ERROR("Render frame with no D3D12 context");
+            return;
+        }
+
+        // ---------------------------------------------------------------------
+        //  The whole D3D12 frame, in the order D3D12 requires.
+        //
+        //    BeginFrame   - waits for this frame's allocator to be free, resizes
+        //                   if the window changed, and acquires a back buffer.
+        //    Clear        - recorded into the command list. Costs one write on
+        //                   the CPU; the GPU has not been told anything yet.
+        //    EndFrame     - closes the list, submits it, presents, and signals
+        //                   the fence so the NEXT BeginFrame knows when this
+        //                   allocator may be reset.
+        //
+        //  THE ORDER IS NOT A STYLE CHOICE. Resize after BeginFrame and the
+        //  buffer is invalidated after it was acquired. Clear after EndFrame and
+        //  the command list is closed, so the clear goes nowhere. And with one
+        //  frame in flight instead of two, the CPU would wait for the GPU before
+        //  starting the next frame and the frame rate would be CPU time plus
+        //  GPU time with no overlap - which is why kFramesInFlight is 2.
+        //
+        //  The blue is deliberately a mid-brightness colour rather than pure
+        //  blue: a saturated (0,0,255) is easy to mistake for a window the
+        //  compositor did not composite, while something like this is
+        //  unmistakably a cleared render target.
+        // ---------------------------------------------------------------------
+        context_->BeginFrame();
+        context_->ClearRenderTarget(0.05F, 0.20F, 0.60F, 1.0F);
+        context_->EndFrame();
+    }
+
     void OnShutdown() override
     {
         // Runs while the window AND the logger are both still alive. After the
-        // window is destroyed this would be a use-after-free of the HWND; after
+        // window is destroyed this would be a use-after-free of the HWND - and
+        // D3D12Context reads it every frame to check for a resize; after
         // Log::Shutdown it would be a null logger. Application guarantees this
         // ordering - see OnShutdown in Application.h.
+        //
+        // The device is released HERE rather than left to the destructor, and
+        // that is not an optimisation. Application::OnShutdown runs while the
+        // window still exists, so a context destroyed here still has a valid
+        // HWND; one destroyed later, as a member, would have to survive past a
+        // point where nothing guarantees that.
+        if (context_)
+        {
+            NOVA_CLIENT_INFO("Destroying the D3D12 context after {} frames", frames_);
+            context_.reset();
+        }
+
         NOVA_CLIENT_INFO("Sandbox shut down cleanly after {} frames", frames_);
     }
 
 private:
+    /// Held by unique_ptr, not by value, and the distinction matters.
+    ///
+    /// A D3D12Context MEMBER would be destroyed after ~SandboxApp runs - and
+    /// Application's destructor is default, so the base class's Window would be
+    /// destroyed first, in between. OnShutdown above is what releases the
+    /// device while the window is guaranteed alive; a member makes that ordering
+    /// a property of the C++ object model instead of a property of a comment.
+    ///
+    /// unique_ptr and not optional: the context has a constructor that can throw
+    /// and no default constructor, so it must be constructed at OnStartup time
+    /// and it must be movable into place. That is exactly the contract
+    /// unique_ptr was invented for.
+    std::unique_ptr<Nova::Renderer::D3D12Context> context_;
+
     int   frames_     = 0;
     float lastMouseX_ = 0.0F;
     float lastMouseY_ = 0.0F;
@@ -157,8 +275,9 @@ int main()
     try
     {
         // Two statements, and that is the whole executable. Everything that can
-        // fail during startup - window creation - is inside the Application
-        // constructor, so the try wraps both it and Run().
+        // fail during startup - window creation, device creation - happens inside
+        // the Application constructor or its OnStartup, so the try wraps both it
+        // and Run().
         SandboxApp app;
         exitCode = app.Run();
     }
@@ -166,8 +285,10 @@ int main()
     {
         // Almost always "GLFW could not be initialised", which on Windows means
         // no desktop session is attached - a service, a CI agent, or a shell
-        // over SSH. Caught rather than allowed to escape so Log::Shutdown below
-        // still runs; an escaping exception would skip it and lose the reason.
+        // over SSH. Or a D3D12 HRESULT from device creation, which names the
+        // failing call. Caught rather than allowed to escape so Log::Shutdown
+        // below still runs; an escaping exception would skip it and lose the
+        // reason.
         NOVA_CRITICAL("Sandbox failed to start: {}", error.what());
         exitCode = 1;
     }
