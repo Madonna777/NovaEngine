@@ -32,9 +32,12 @@
 #include <Core/Input.h>
 #include <Core/KeyCodes.h>
 #include <Core/Log.h>
+#include <Math/Math.h>
 #include <Renderer/D3D12Context.h>
 #include <Renderer/Pipeline.h>
 #include <Renderer/VertexBuffer.h>
+#include <Scene/Camera.h>
+#include <Scene/FPSCameraController.h>
 
 #include <cmath>
 #include <cstddef>
@@ -102,7 +105,37 @@ protected:
 
         CreateTriangleResources();
 
-        NOVA_CLIENT_INFO("Press Escape to close");
+        // ---- camera + FPS controller --------------------------------------
+        //
+        // Set on-axis: the camera sits at z = -3 facing +Z, right at the
+        // origin-centred triangle. It has no render path through the shader
+        // yet - the triangle keeps its clip-space red/green/blue - so this is
+        // infrastructure for the first real MVU contraction, not something a
+        // capture can spot.
+        camera_.position = { 0.0F, 0.0F, -3.0F };
+        camera_.yaw      = 0.0F;
+        camera_.pitch    = 0.0F;
+
+        {
+            const auto [w, h] = GetWindow().GetSize();
+            camera_.UpdateAspectRatio(static_cast<float>(w), static_cast<float>(h));
+        }
+
+        controller_ = std::make_unique<Nova::Scene::FPSCameraController>(camera_, GetWindow());
+        controller_->SetActive(true);
+
+        // Camera projection assumes the window's aspect and the window resizes;
+        // re-reading it inside the resize event means every HandleResize marks
+        // the next frame's GetViewProjectionMatrix honest.
+        resizeToken_ = GetWindow().GetEventDispatcher().Subscribe(Nova::EventType::WindowResize,
+            [this](const Nova::Event& event)
+            {
+                const auto& size = event.As<Nova::WindowResizeEvent>();
+                camera_.UpdateAspectRatio(static_cast<float>(size.width),
+                                          static_cast<float>(size.height));
+            });
+
+        NOVA_CLIENT_INFO("Press Escape to close, WASD to move, mouse to look");
     }
 
     void OnUpdate(float deltaTime) override
@@ -126,39 +159,30 @@ protected:
         }
 
         // ---------------------------------------------------------------------
-        //  Demo 2: keys held, read as a LEVEL.
+        //  Demo 2: camera controller driven by the frame delta.
         //
-        //  Gameplay asks "am I moving right" and the answer must be true on
-        //  every frame the key is down, not only the first - so gameplay code
-        //  calls IsKeyDown. Here the log line is emitted on the press edge
-        //  instead, purely so the console shows one line per press rather than
-        //  sixty per second.
+        //  Runs AFTER the Escape check to preserve the usual kill-switch-first
+        //  ordering of a typical dep runtime loop. Update reads the mouse delta
+        //  pool the MouseMoved events fed it since the last frame, applies
+        //  sensitivity, and integrates WASD motion in seconds. So mouse look is
+        //  even-rate regardless of how slow the main loop is, and movement
+        //  speed is always in world units per second.
         // ---------------------------------------------------------------------
-        if (Nova::Input::IsKeyPressed(Nova::Key::Code::W))
+        if (controller_)
         {
-            NOVA_CLIENT_INFO("W is down ({})", Nova::Key::Name(Nova::Key::Code::W));
-        }
-        if (Nova::Input::IsKeyPressed(Nova::Key::Code::Space))
-        {
-            NOVA_CLIENT_INFO("Space is down ({})", Nova::Key::Name(Nova::Key::Code::Space));
+            controller_->Update(deltaTime);
         }
 
-        // ---------------------------------------------------------------------
-        //  Demo 3: the mouse, polled live.
-        //
-        //  Logged only when it actually moves, for the same reason as above.
-        //  Two things worth noticing: the position is CLIENT-relative, and +Y
-        //  points DOWN. D3D12's normalised device coordinate Y points UP, so
-        //  every projection built from this has to flip it - Math will own that
-        //  and this comment is the reminder of why.
-        // ---------------------------------------------------------------------
-        const auto [mouseX, mouseY] = Nova::Input::GetMousePosition();
-        if (std::fabs(mouseX - lastMouseX_) > 1.0F || std::fabs(mouseY - lastMouseY_) > 1.0F)
+        // Periodic console heartbeat so a headless dev can tell the camera is
+        // hearing live input, rather than rendering the last accumulated pose.
+        cameraLogAccumulator_ += deltaTime;
+        if (cameraLogAccumulator_ >= 2.0F)
         {
-            NOVA_CLIENT_INFO("Mouse at ({:.0f}, {:.0f}) - client-relative, +Y is down", mouseX,
-                             mouseY);
-            lastMouseX_ = mouseX;
-            lastMouseY_ = mouseY;
+            cameraLogAccumulator_ = 0.0F;
+            NOVA_CLIENT_INFO(
+                "Camera: pos=({:.2f}, {:.2f}, {:.2f}) yaw={:.1f}deg pitch={:.1f}deg",
+                camera_.position.x, camera_.position.y, camera_.position.z,
+                Nova::Math::Degrees(camera_.yaw), Nova::Math::Degrees(camera_.pitch));
         }
 
         // ---------------------------------------------------------------------
@@ -266,6 +290,22 @@ protected:
             context_.reset();
         }
 
+        // Releases the FPS controller before the window itself goes. Its
+        // destructor unsubscribes from the dispatcher, and resetting the
+        // cursor mode happens here so the OS cursor is not trapped in Disabled
+        // after the process drops the window.
+        if (controller_)
+        {
+            controller_->SetActive(false);
+            controller_.reset();
+        }
+
+        if (resizeToken_ != 0)
+        {
+            GetWindow().GetEventDispatcher().Unsubscribe(Nova::EventType::WindowResize, resizeToken_);
+            resizeToken_ = 0;
+        }
+
         NOVA_CLIENT_INFO("Sandbox shut down cleanly after {} frames", frames_);
     }
 
@@ -334,6 +374,23 @@ private:
     /// and no default constructor, so it must be constructed at OnStartup time
     /// and it must be movable into place. That is exactly the contract
     /// unique_ptr was invented for.
+    /// By value, not by pointer: a Camera is a 40-byte POD with no resources
+    /// and no lifetime of its own, so indirection would buy nothing and would
+    /// make the common "where am I" read a pointer chase.
+    Nova::Scene::Camera camera_;
+
+    /// Heap-allocated because FPSCameraController is non-movable: it holds a
+    /// Window reference and an event subscription token, both tied to the
+    /// Application's own lifetime.
+    std::unique_ptr<Nova::Scene::FPSCameraController> controller_;
+
+    /// Subscription id for the WindowResize handler above, released in
+    /// OnShutdown while the Window is still alive.
+    Nova::EventDispatcher::Token resizeToken_ = 0;
+
+    /// Seconds since the last camera heartbeat line.
+    float cameraLogAccumulator_ = 0.0F;
+
     std::unique_ptr<Nova::Renderer::D3D12Context> context_;
 
     /// Shader pipeline: compiles the HLSL pair and owns the PSO it produces.
@@ -343,8 +400,6 @@ private:
     std::unique_ptr<Nova::Renderer::D3D12VertexBuffer> vertexBuffer_;
 
     int   frames_     = 0;
-    float lastMouseX_ = 0.0F;
-    float lastMouseY_ = 0.0F;
 };
 } // namespace
 

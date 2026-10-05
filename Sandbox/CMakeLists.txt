@@ -25,7 +25,7 @@ add_executable(Sandbox src/main.cpp)
 # Nova::Core transitively, but naming Core here too keeps the direct dependency
 # visible - if the Renderer ever stopped depending on Core, Sandbox would still
 # be honest about the fact that it logs through it.
-target_link_libraries(Sandbox PRIVATE Nova::Core Nova::Renderer)
+target_link_libraries(Sandbox PRIVATE Nova::Core Nova::Renderer Nova::Math Nova::Scene)
 
 # ---------------------------------------------------------------------------
 #  SHADERS
