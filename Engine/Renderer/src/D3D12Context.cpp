@@ -80,6 +80,7 @@ D3D12Context::D3D12Context(HWND           windowHandle,
     // unwinds cleanly and destroys whatever was already created.
     CreateFactoryAndDevice();
     CreateCommandInfrastructure();
+    CreateRootSignature();
     CreateSwapChain(backBufferWidth, backBufferHeight);
 }
 

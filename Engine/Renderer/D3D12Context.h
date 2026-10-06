@@ -268,6 +268,51 @@ public:
     /// heap: shader resources follow the same descriptor-slot discipline.
     void CreateDefaultRenderTarget();
 
+    // -----------------------------------------------------------------------
+    //  Root signature
+    // -----------------------------------------------------------------------
+
+    /// Builds the root signature the lit shaders are compiled against.
+    ///
+    /// Registers, and the reason each one exists:
+    ///
+    ///     b0  CameraCB  - viewProjection + eye position. Set once per frame by
+    ///                     the camera; identical for every draw in the frame.
+    ///     b1  ObjectCB  - the model matrix. Set per draw call.
+    ///     b2  LightCB   - direction, colour, ambient. Set when lighting changes;
+    ///                     usually once per frame for a single directional light.
+    ///
+    /// They are declared as ROOT DESCRIPTORS (D3D_ROOT_PARAMETER_TYPE_CBV),
+    /// not as descriptor TABLES. The distinction decides the whole binding
+    /// path: a root descriptor is a raw GPU address bound with
+    /// SetGraphicsRootConstantBuffer and needs no descriptor heap at all, while
+    /// a table needs a heap, a slot in it, and a SetGraphicsRootDescriptorTable
+    /// call per buffer. Tables are the right answer for bindless rendering with
+    /// hundreds of bindless resources; for three fixed buffers they are three
+    /// heaps' worth of ceremony for no benefit.
+    ///
+    /// WHY A SHARED SIGNATURE RATHER THAN ONE PER SHADER: a root signature
+    /// may declare MORE than a shader uses, but never less. One signature that
+    /// covers every register the lit shaders read therefore binds every shader,
+    /// which is what makes a shader swap a bytecode swap instead of a pipeline
+    /// and heap rebuild. The failure mode of getting it wrong is asymmetric and
+    /// worth knowing: a shader reading a register the signature does not
+    /// declare is caught at PSO creation by the debug layer; a signature
+    /// declaring a register the shader ignores is perfectly legal and silent.
+    ///
+    /// @throws std::runtime_error if serialisation or creation fails.
+    void CreateRootSignature();
+
+    /// @return The root signature every pipeline in this context is built with.
+    ///
+    /// @pre CreateRootSignature has run. Null otherwise, which a pipeline
+    ///      creation will report as an invalid-argument HRESULT rather than
+    ///      crashing here.
+    [[nodiscard]] ID3D12RootSignature* GetRootSignature() const noexcept
+    {
+        return rootSignature_.Get();
+    }
+
 private:
     // ---- construction steps, one translation unit each --------------------
 
@@ -334,6 +379,12 @@ private:
     ComPtr<IDXGIFactory4> factory_;
     ComPtr<ID3D12Device>  device_;
     ComPtr<ID3D12CommandQueue> commandQueue_;
+
+    /// Declares the shader-visible register layout: b0 camera, b1 object,
+    /// b2 light. Owned here because the device owns the root signature's
+    /// validity window, not the pipeline state.
+    ComPtr<ID3D12RootSignature> rootSignature_;
+
     ComPtr<IDXGISwapChain3>    swapChain_;
     ComPtr<ID3D12DescriptorHeap> rtvHeap_;
 
