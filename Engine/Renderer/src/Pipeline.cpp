@@ -117,21 +117,29 @@ ComPtr<ID3D12RootSignature> CreateRootSignature(ID3D12Device* device)
     return rootSignature;
 }
 
-/// Builds the PSO from compiled blobs, an input layout and the global defaults.
+/// Builds the PSO from a reflected shader and the context's root signature.
+///
+/// @note The input layout comes from the shader's own reflection rather than a
+///       caller-supplied array. A hand-written layout and a reflected one can
+///       disagree - a semantic order or an offset - and the disagreement is
+///       silent: the pipeline is created, the draw executes, and the vertices
+///       arrive shuffled per attribute. One source of truth removes the class
+///       of bug rather than the instance of it.
 ComPtr<ID3D12PipelineState> CreatePipelineState(ID3D12Device*              device,
                                                 ID3D12RootSignature*         rootSignature,
-                                                ID3DBlob*                    vertexShader,
-                                                ID3DBlob*                    pixelShader,
+                                                D3D12_SHADER_BYTECODE        vertexShader,
+                                                D3D12_SHADER_BYTECODE        pixelShader,
                                                 const D3D12_INPUT_ELEMENT_DESC* inputLayout,
                                                 std::uint32_t                inputElementCount)
 {
     D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{};
 
-    // Shaders are immutable blobs here: the PSO copies what it needs at create
-    // time, so the caller can release the blobs immediately after.
+    // The bytecode is a (pointer, size) pair, not an ID3DBlob: the PSO copies
+    // what it needs at creation, so the Shader is free to release its blobs the
+    // moment Create returns.
     desc.pRootSignature = rootSignature;
-    desc.VS             = { vertexShader->GetBufferPointer(), vertexShader->GetBufferSize() };
-    desc.PS             = { pixelShader->GetBufferPointer(),  pixelShader->GetBufferSize()  };
+    desc.VS             = vertexShader;
+    desc.PS             = pixelShader;
 
     // Fixed function state that the triangle does not need but the PSO must
     // still name. Blending disabled means the pixel shader wins every pixel.
@@ -163,6 +171,28 @@ ComPtr<ID3D12PipelineState> CreatePipelineState(ID3D12Device*              devic
 }
 } // namespace
 
+void D3D12Pipeline::Create(ID3D12Device* device, const Shader& shader,
+                           ID3D12RootSignature* rootSignature)
+{
+    if (device == nullptr || rootSignature == nullptr)
+    {
+        // A null device or root signature here would surface as an obscure
+        // E_INVALID_ARGUMENT from CreateGraphicsPipelineState, or - worse -
+        // succeed and fail at draw time with the debug layer's "root signature
+        // mismatch". The check is free and the message is actionable.
+        throw std::invalid_argument("D3D12Pipeline::Create requires a device and a root signature");
+    }
+
+    const std::vector<D3D12_INPUT_ELEMENT_DESC> layout = shader.BuildInputLayout();
+
+    rootSignature_ = rootSignature;
+    pso_ = CreatePipelineState(device, rootSignature, shader.GetVertexShaderBytecode(),
+                              shader.GetPixelShaderBytecode(), layout.data(),
+                              static_cast<UINT>(layout.size()));
+
+    NOVA_INFO("Pipeline state created for {} input elements", layout.size());
+}
+
 void D3D12Pipeline::Create(ID3D12Device*                  device,
                            const std::wstring&             vertexShaderPath,
                            const std::wstring&             pixelShaderPath,
@@ -176,8 +206,10 @@ void D3D12Pipeline::Create(ID3D12Device*                  device,
     ComPtr<ID3DBlob> pixelBlob  = CompileShader(pixelShaderPath,  "main", "ps_5_0");
 
     rootSignature_ = CreateRootSignature(device);
-    pso_           = CreatePipelineState(device, rootSignature_.Get(), vertexBlob.Get(),
-                                          pixelBlob.Get(), inputElements, inputElementCount);
+    pso_           = CreatePipelineState(device, rootSignature_.Get(),
+                                          { vertexBlob->GetBufferPointer(), vertexBlob->GetBufferSize() },
+                                          { pixelBlob->GetBufferPointer(),  pixelBlob->GetBufferSize()  },
+                                          inputElements, inputElementCount);
 
     NOVA_INFO("Pipeline state created");
 }

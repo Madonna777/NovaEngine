@@ -28,13 +28,17 @@
 //  The demos below are ordered by how much they are worth reading.
 // ===========================================================================
 
+#include "FrameConstants.h"
+
 #include <Core/Application.h>
 #include <Core/Input.h>
 #include <Core/KeyCodes.h>
 #include <Core/Log.h>
 #include <Math/Math.h>
 #include <Renderer/D3D12Context.h>
+#include <Renderer/Material.h>
 #include <Renderer/Pipeline.h>
+#include <Renderer/Shader.h>
 #include <Renderer/VertexBuffer.h>
 #include <Scene/Camera.h>
 #include <Scene/FPSCameraController.h>
@@ -44,6 +48,7 @@
 #include <cstdint>
 #include <exception>
 #include <iterator>
+#include <vector>
 
 namespace
 {
@@ -103,7 +108,7 @@ protected:
                          Nova::Renderer::D3D12Context::kSwapBufferCount,
                          context_->GetDedicatedVideoMemoryBytes() / (1024ULL * 1024ULL));
 
-        CreateTriangleResources();
+        CreateLitResources();
 
         // ---- camera + FPS controller --------------------------------------
         //
@@ -212,60 +217,71 @@ protected:
 
     void OnRenderFrame() override
     {
-        if (!context_)
+        if (!context_ || !vertexBuffer_ || !pipeline_)
         {
-            // Only reachable if device creation threw out of OnStartup, and
-            // Application catches that, shuts down, and never enters the loop.
-            // Checked anyway: a null dereference in the frame loop is a much
-            // worse diagnostic than a one-line log.
-            NOVA_CLIENT_ERROR("Render frame with no D3D12 context");
+            // Only reachable if startup threw part-way through; Application
+            // catches that and never enters the loop. Checked anyway: a null
+            // dereference in the frame loop is a much worse diagnostic than a
+            // one-line log.
+            NOVA_CLIENT_ERROR("Render frame with incomplete GPU resources");
             return;
         }
 
         // ---------------------------------------------------------------------
         //  The whole D3D12 frame, in the order D3D12 requires.
         //
-        //    BeginFrame   - waits for this frame's allocator to be free, resizes
-        //                   if the window changed, acquires a back buffer, and
+        //    BeginFrame   - waits for this frame's allocator, resizes if the
+        //                   window changed, acquires a back buffer, and
         //                   transitions it to render-target state.
         //    Clear        - paints the background into the acquired buffer.
-        //    Viewport     - recorded command scoping pixel space to the swap
-        //                   chain size; without it every draw lands in a 0-sized
-        //                   box, which is why so many first-triangles are black.
-        //    Scissor      - stronger clip than the viewport for pixels that must
-        //                   never escape; paired with it here.
-        //    Pipeline     - PSO and root signature are command-list state just
-        //                   like the viewport; set before the vertex buffer and
-        //                   draw because the draw consumes them as one package.
-        //    VertexBuffer - bound on slot 0 of the IA stage.
-        //    DrawInstanced(3, 1, 0, 0) - three vertices as one TRIANGLELIST.
-        //    EndFrame     - closes the list, transitions back to PRESENT state,
-        //                   submits, presents, and signals the fence so the next
-        //                   BeginFrame knows when this allocator may be reused.
+        //    Viewport     - pixel space for the projection; a 0-sized viewport
+        //                   is why so many first-triangles render black.
+        //    Scissor      - the clip that must not be escaped.
+        //    Root sig + PSO - command-list state, like the viewport; bound
+        //                   before the draw that consumes it.
+        //    Constant CBs - camera every frame, object every frame, light once.
+        //    Vertex buffer + DrawInstanced.
+        //    EndFrame     - closes, transitions back to PRESENT, submits,
+        //                   presents, signals the fence.
         //
         //  THE ORDER IS NOT A STYLE CHOICE. Resize after BeginFrame and the
-        //  buffer is invalidated after it was acquired. Clear after EndFrame and
-        //  the command list is closed, so the clear goes nowhere. And with one
-        //  frame in flight instead of two, the CPU would wait for the GPU before
-        //  starting the next frame and the frame rate would be CPU time plus
-        //  GPU time with no overlap - which is why kFramesInFlight is 2.
-        //
-        //  The vertices are authored so that each output pixel's colour is the
-        //  barycentric mix of red, green and blue - the interpolation is the
-        //  rasteriser's job, this shader is only the endpoint.
+        //  buffer is invalidated after acquisition; clear after EndFrame and the
+        //  list is already closed; and with one frame in flight the CPU would
+        //  wait for the GPU every frame, which is why kFramesInFlight is 2.
         // ---------------------------------------------------------------------
         context_->BeginFrame();
-        context_->ClearRenderTarget(0.08F, 0.08F, 0.10F, 1.0F);
+        context_->ClearRenderTarget(0.02F, 0.02F, 0.03F, 1.0F);
         context_->SetViewport(static_cast<float>(context_->GetBackBufferWidth()),
                               static_cast<float>(context_->GetBackBufferHeight()));
         context_->SetScissorRect();
 
         auto* commandList = context_->GetCommandList();
+
+        // Per-frame slot for the constant buffers. Separate from the renderer's
+        // allocator slot on purpose: the two count the same thing (frames in
+        // flight) but they are not required to advance together, and coupling
+        // them would make every constant write depend on swap-chain rotation
+        // order rather than on the frame count.
+        frameSlot_ = (frameSlot_ + 1) % Nova::Renderer::D3D12Context::kFramesInFlight;
+
+        // Accumulate the yaw from the frame delta rather than wall-clock time so
+        // the spin rate is identical at 30 FPS and at 300 - the same reasoning
+        // the FPS controller uses for movement.
+        spinAngle_ += GetDeltaTime() * 0.6F;
+
+        Nova::Sandbox::UpdateFrameConstants(material_, camera_, frameSlot_, spinAngle_);
+
+        // The root signature is bound explicitly even though Pipeline::Bind also
+        // sets it: this is the call that says "these root parameters are the
+        // ones the constants above were written for", and having it next to the
+        // writes is what makes a register mismatch readable.
+        commandList->SetGraphicsRootSignature(context_->GetRootSignature());
         pipeline_->Bind(commandList);
 
-        D3D12_VERTEX_BUFFER_VIEW vertexBufferView = vertexBuffer_->GetVertexBufferView();
-        commandList->IASetVertexBuffers(0, 1, &vertexBufferView);
+        material_.Bind(commandList, frameSlot_);
 
+        const D3D12_VERTEX_BUFFER_VIEW vertexBufferView = vertexBuffer_->GetVertexBufferView();
+        commandList->IASetVertexBuffers(0, 1, &vertexBufferView);
         commandList->DrawInstanced(3, 1, 0, 0);
 
         context_->EndFrame();
@@ -310,55 +326,99 @@ protected:
     }
 
 private:
-    /// Compiles the shaders into the PSO and places the triangle in an upload
-    /// heap buffer.
+    /// Compiles the lit shader pair, reflects it, and prepares the per-frame
+    /// constant buffers and the triangle's vertex data.
     ///
-    /// @note Both are member-shaped rather than stack locals inside OnStartup:
-    ///       the PSO and the buffer are needed on every frame, and the set
-    ///       keeps the whole graphics side of the Sandbox declared in one
-    ///       place.
-    void CreateTriangleResources()
+    /// @note Every artefact is a member rather than a stack local in OnStartup:
+    ///       all of them are needed on every frame, and the set keeps the whole
+    ///       graphics side of the Sandbox declared in one place.
+    void CreateLitResources()
     {
-        // ---- the vertex input layout ---------------------------------------
+        material_.SetDevice(context_->GetDevice());
+        // Two slots, matching the renderer's frames in flight: the slot being
+        // written this frame is not the one the GPU is reading.
+        material_.SetFrameCount(Nova::Renderer::D3D12Context::kFramesInFlight);
+
+        // ---- compile and reflect -------------------------------------------
         //
-        // The contract between the vertex buffer, the input assembler stage,
-        // and the vertex shader. Every D3D12_INPUT_ELEMENT_DESC names one
-        // attribute of one vertex row and where the assembler should read it
-        // from: which semantic index the shader declares, whether it is a
-        // PER_VERTEX_DATA or PER_INSTANCE_DATA field, its offset in the row,
-        // and the row's stride. The order has to match Vertex field order -
-        // this is the array the compiler validates against the HLSL Input
-        // struct, and a layout whose POSITION offset disagrees with the HLSL
-        // struct simply produces a triangle at nonsense coordinates.
-        static const D3D12_INPUT_ELEMENT_DESC kInputLayout[] = {
-            { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT,    0,
-              static_cast<UINT>(offsetof(Nova::Renderer::Vertex, position)),
-              D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-            { "COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0,
-              static_cast<UINT>(offsetof(Nova::Renderer::Vertex, color)),
-              D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-        };
+        // CompileFromFile compiles BOTH stages and reflects them in one call,
+        // so the pipeline below builds its input layout out of the shader's own
+        // reflection. That is the point of reflecting at all: the layout the
+        // pipeline declares and the layout the shader was written for cannot
+        // disagree, because there is only one of them.
+        material_.SetShader(Nova::Renderer::Shader::CompileFromFile(L"Shaders/lit_vs.hlsl",
+                                                                    L"Shaders/lit_ps.hlsl"));
 
+        const auto& shader = material_.GetShader();
+
+        // Logged because the next question is always "which registers does this
+        // shader actually read", and here the answer comes from the engine's own
+        // reflection rather than from re-reading the HLSL.
+        for (const auto& element : shader.GetInputLayoutElements())
+        {
+            NOVA_CLIENT_INFO("  input {} ({} components) at offset {}",
+                             element.semanticName, element.componentCount, element.byteOffset);
+        }
+        for (const auto& constant : shader.GetConstantBuffers())
+        {
+            NOVA_CLIENT_INFO("  cbuffer b{} '{}' ({} bytes)", constant.registerIndex,
+                             constant.name, constant.sizeInBytes);
+        }
+
+        // ---- constant buffers, sized once ----------------------------------
+        //
+        // Created explicitly rather than on first use: the size comes from the
+        // struct, and a buffer sized by whichever struct happened to be written
+        // first would be sized by accident.
+        Nova::Sandbox::CreateFrameConstants(material_);
+
+        // ---- pipeline state ------------------------------------------------
+        //
+        // Built against the CONTEXT'S root signature, not one of its own. Two
+        // root signatures in one renderer is the failure mode that surfaces at
+        // draw time as "root signature mismatch" naming neither signature.
         pipeline_ = std::make_unique<Nova::Renderer::D3D12Pipeline>();
-        pipeline_->Create(context_->GetDevice(), L"Shaders/triangle_vs.hlsl",
-                          L"Shaders/triangle_ps.hlsl", kInputLayout,
-                          static_cast<std::uint32_t>(std::size(kInputLayout)));
+        pipeline_->Create(context_->GetDevice(), shader, context_->GetRootSignature());
 
-        // The triangle's three vertices, with one attribute the triangle can
-        // not miss - the colour. Un-transformed clip-space positions placing
-        // the triangle at the centre of the screen: a red apex up, green
-        // bottom-right, blue bottom-left. Each interior pixel's colour is the
-        // interpolation of those three corners, so the gradient is the
-        // rasteriser's linear mix, not something the vertex shader varies per
-        // frame.
+        // ---- vertex data ---------------------------------------------------
+        //
+        // World-space positions in front of the camera, which sits at z = -3
+        // facing +Z. Each vertex carries the normal the lighting stage needs and
+        // a base colour the pixel shader multiplies the light by - so the
+        // gradient on screen is Lambert shading rather than a barycentric
+        // interpolation artefact.
+        //
+        // ONE FLAT TRIANGLE HAS ONE NORMAL, so the Lambert term is uniform
+        // across its interior - the visible variation is the gradient between the
+        // three vertex COLOURS, not a lighting gradient. The shading changes over
+        // time instead because the object model matrix rotates, which
+        // sweeps this one normal through the light: ndotl starts near 0.64, falls
+        // through zero as the face turns away, and the ambient floor keeps the
+        // back side visible rather than black. A mesh milestone replaces this
+        // with real per-face normals and the whole lighting model gets a
+        // gradient for free.
+        //
+        // THE NORMAL IS POINTED AT THE LIGHT ON PURPOSE. A normal of (0,0,-1) -
+        // "facing the camera", the reflex choice for a flat triangle - leaves
+        // ndotl at about 0.25 against this light, so the demo renders a dim,
+        // unlit-looking object and the shading path looks broken when it is
+        // working correctly. (0.25, 0.60, -0.76) is unit length and faces up and
+        // slightly toward the viewer, where the light can actually reach it.
         const std::vector<Nova::Renderer::Vertex> triangle = {
-            { {  0.0F,  0.5F, 0.0F }, { 1.0F, 0.0F, 0.0F, 1.0F } }, // top:    red
-            { {  0.5F, -0.5F, 0.0F }, { 0.0F, 1.0F, 0.0F, 1.0F } }, // right:  green
-            { { -0.5F, -0.5F, 0.0F }, { 0.0F, 0.0F, 1.0F, 1.0F } }, // left:   blue
+            // position            normal                uv              colour
+            { {  0.0F,  0.6F, 0.0F }, { 0.25F, 0.60F, -0.76F }, { 0.5F, 0.0F },
+              { 1.0F, 0.25F, 0.25F, 1.0F } },
+            { {  0.7F, -0.5F, 0.2F }, { 0.25F, 0.60F, -0.76F }, { 1.0F, 0.0F },
+              { 0.25F, 1.0F, 0.35F, 1.0F } },
+            { { -0.7F, -0.5F, 0.2F }, { 0.25F, 0.60F, -0.76F }, { 0.0F, 0.0F },
+              { 0.30F, 0.45F, 1.0F, 1.0F } },
         };
 
         vertexBuffer_ = std::make_unique<Nova::Renderer::D3D12VertexBuffer>(context_->GetDevice(),
                                                                              triangle);
+        NOVA_CLIENT_INFO("Triangle ready: {} bytes, reflected stride {}",
+                         static_cast<unsigned>(triangle.size() * sizeof(Nova::Renderer::Vertex)),
+                         shader.GetVertexStride());
     }
 
 private:
@@ -393,13 +453,24 @@ private:
 
     std::unique_ptr<Nova::Renderer::D3D12Context> context_;
 
-    /// Shader pipeline: compiles the HLSL pair and owns the PSO it produces.
+    /// Shader pipeline: owns the PSO built from the reflected lit shader.
     std::unique_ptr<Nova::Renderer::D3D12Pipeline> pipeline_;
 
-    /// The three vertices of the first triangle, in an upload-heap buffer.
+    /// Shader plus the constant buffers bound to b0/b1/b2. A member rather than
+    /// a local because the buffers are GPU resources whose lifetime must outlive
+    /// the frame that filled them.
+    Nova::Renderer::Material material_;
+
+    /// The three vertices of the triangle, in an upload-heap buffer.
     std::unique_ptr<Nova::Renderer::D3D12VertexBuffer> vertexBuffer_;
 
     int   frames_     = 0;
+
+    /// Rotating per-frame constant buffer slot, 0 to frames-in-flight minus one.
+    std::uint32_t frameSlot_ = 0;
+
+    /// Yaw of the object's model matrix, accumulated per frame.
+    float spinAngle_ = 0.0F;
 };
 } // namespace
 

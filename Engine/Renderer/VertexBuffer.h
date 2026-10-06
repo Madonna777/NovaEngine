@@ -21,12 +21,26 @@ namespace Nova::Renderer
 /// but a named abstraction here is two types that have to stay in sync - the
 /// VERTEX shader does not know where the engine put things, only the IA layout
 /// object does.
+///
+/// FIELD ORDER IS LOAD-BEARING: it must match the canonical semantic order in
+/// ShaderReflection.cpp (POSITION, NORMAL, UV, COLOR) AND the reflected layout
+/// the Shader produces. All three agree because a shader that reads uv before
+/// color would sample the wrong bytes silently.
 struct Vertex
 {
-    /// Object->clip position so far supplied directly in clip space: [x, y, z].
+    /// Object-space position: [x, y, z]. Transformed by ObjectCB::model in the
+    /// vertex shader; never supplied in clip space any more.
     float position[3];
 
-    /// RGBA colour, forwarded through the pixel shader to the back buffer.
+    /// Object-space normal. The shader multiplies it by the model matrix, which
+    /// is only correct for rotation and uniform scale.
+    float normal[3];
+
+    /// Texture coordinates, passed through untouched today and consumed by the
+    /// first textured material.
+    float uv[2];
+
+    /// RGBA base colour, multiplied by the light in the pixel shader.
     float color[4];
 };
 

@@ -18,7 +18,17 @@
 # mainCRTStartup, which works but produces an app that has no console and no
 # window - strictly worse than what we want here. The Win32 entry point arrives
 # with the renderer's GLFW window, where there is a window to justify it.
-add_executable(Sandbox src/main.cpp)
+#
+# WHY FrameConstants IS A SEPARATE SOURCE: it holds the CPU mirror of
+# Shaders/common.hlsli. That mirror has to stay byte-for-byte compatible with the
+# shader, and it is the one place in the engine where a routine file reshuffle
+# can silently break the rendering. Owning its own translation unit means main.cpp
+# stays about the application's behaviour, and a reader who greps for the shader
+# contract finds a file named after it.
+add_executable(Sandbox
+    src/FrameConstants.cpp
+    src/main.cpp
+)
 
 # WHY TWO LINKS AND NOT ONE: Sandbox is the executable, so it is where the
 # decision to render through D3D12 is actually made. Nova::Renderer already links

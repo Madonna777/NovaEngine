@@ -12,6 +12,7 @@
 #pragma once
 
 #include <Renderer/D3D12Helpers.h>
+#include <Renderer/Shader.h>
 
 #include <cstdint>
 #include <string>
@@ -33,6 +34,20 @@ public:
     D3D12Pipeline& operator=(const D3D12Pipeline&) = delete;
     D3D12Pipeline(D3D12Pipeline&&)                 = delete;
     D3D12Pipeline& operator=(D3D12Pipeline&&)      = delete;
+
+    /// Builds the PSO for an already-compiled shader pair.
+    ///
+    /// @param device           Device to create the pipeline state from.
+    /// @param shader           Compiled shader pair, including its reflected
+    ///                         input layout.
+    /// @param rootSignature    Root signature the shader was compiled against.
+    ///                         Must be the SAME OBJECT the command list will be
+    ///                         recorded with: D3D12 validates the pairing at
+    ///                         draw time, and the debug layer's report names
+    ///                         neither of the two signatures that mismatched.
+    ///
+    /// @throws std::runtime_error if the pipeline state cannot be created.
+    void Create(ID3D12Device* device, const Shader& shader, ID3D12RootSignature* rootSignature);
 
     /// Compiles the shaders, creates the root signature and builds the PSO.
     ///
