@@ -132,6 +132,17 @@ public:
     ///         value is dominated by one frame's jitter and reads as noise.
     [[nodiscard]] float GetFramesPerSecond() const noexcept { return framesPerSecond_; }
 
+    /// @return Seconds of accumulated clamped delta time since Run() started.
+    ///
+    /// @note The sum of the CLAMPED deltas, not the wall clock. That distinction
+    ///       is the reason this is a member rather than something a caller
+    ///       accumulates for itself: a caller summing its own frame deltas gets a
+    ///       slightly different number after the first frame that exceeded
+    ///       maxDeltaSeconds, and an animation driven by that number visibly
+    ///       drifts against anything driven by this one. Everything that must
+    ///       agree about elapsed time reads it here, so there is one clock.
+    [[nodiscard]] float GetElapsedTime() const noexcept { return elapsedTime_; }
+
     [[nodiscard]] bool IsRunning() const noexcept { return running_; }
 
 protected:
@@ -212,5 +223,13 @@ private:
 
     float deltaTime_      = 0.0F;
     float framesPerSecond_ = 0.0F;
+
+    /// Running sum of the clamped delta times. Accumulated here rather than by
+    /// callers so that everything driven by elapsed time - animation, sky
+    /// rotation, a shader's own clock - reads one value and cannot drift against
+    /// another. A float loses precision past roughly 4 billion seconds of
+    /// accumulated time, which at any plausible frame rate is longer than the
+    /// process would run.
+    float elapsedTime_ = 0.0F;
 };
 } // namespace Nova

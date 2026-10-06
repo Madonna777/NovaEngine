@@ -63,20 +63,29 @@ nova_add_module(Renderer
         src/D3D12RootSignature.cpp
         src/D3D12SwapChain.cpp
         src/Material.cpp
+        src/Mesh.cpp
+        src/MeshLoader.cpp
+        src/Model.cpp
         src/Pipeline.cpp
+        src/Primitives.cpp
+        src/PrimitivesSphere.cpp
         src/Shader.cpp
         src/ShaderReflection.cpp
-        src/VertexBuffer.cpp
     HEADERS
         ConstantBuffer.h
         D3D12Context.h
         D3D12Helpers.h
         Material.h
+        Mesh.h
+        MeshLoader.h
+        Model.h
         Pipeline.h
+        Primitives.h
         Shader.h
-        VertexBuffer.h
     DEPENDS
         Nova::Core
+        Nova::Math
+        assimp::assimp
         d3d12
         dxgi
         d3dcompiler
@@ -101,3 +110,22 @@ target_compile_definitions(Renderer PRIVATE
     $<$<CONFIG:Debug>:NOVA_D3D12_DEBUG_LAYER=1>
     $<$<NOT:$<CONFIG:Debug>>:NOVA_D3D12_DEBUG_LAYER=0>
 )
+
+
+
+# ---------------------------------------------------------------------------
+#  Assimp
+# ---------------------------------------------------------------------------
+# WHY find_package HERE AND NOT IN THE ROOT: what matters is that it runs before
+# nova_add_module lists assimp::assimp, because an imported target does not
+# exist until the config file declaring it has been loaded. Keeping the two
+# lists adjacent means a dependency cannot be declared without a find_package
+# that would fail at configure time if the port were dropped from vcpkg.json.
+#
+# WHY assimp IS A DEFAULT vcpkg DEPENDENCY AND NOT PART OF THE "renderer"
+# FEATURE: MeshLoader.cpp is compiled unconditionally into the Renderer module,
+# so assimp is needed by every build that builds Renderer. A feature nobody
+# enables is a dependency that is silently absent, and find_package then fails at
+# configure time on a machine that has the port installed - which is exactly the
+# failure that cost time here.
+find_package(assimp CONFIG REQUIRED)

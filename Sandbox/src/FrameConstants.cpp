@@ -24,10 +24,8 @@ void CreateFrameConstants(Renderer::Material& material)
     material.EnsureConstantBuffer(2, sizeof(LightConstantData));    // b2
 }
 
-void UpdateFrameConstants(Renderer::Material& material,
-                          const Scene::Camera& camera,
-                          std::uint32_t    frameSlot,
-                          float            spinAngle)
+void UpdateFrameConstants(Renderer::Material& material, const Scene::Camera& camera,
+                          std::uint32_t frameSlot)
 {
     // ---- b0: the camera ------------------------------------------------
     //
@@ -45,20 +43,22 @@ void UpdateFrameConstants(Renderer::Material& material,
     cameraConstants.padding            = 0.0F;
     material.SetConstantBuffer(0, cameraConstants, frameSlot);
 
-    // ---- b1: the object ------------------------------------------------
-    //
-    // A yaw-only rotation, so the triangle turns about its own vertical axis
-    // and shows a different facet to the light as it goes. Driven off the frame
-    // delta rather than wall-clock time so the spin rate is identical at 30 FPS
-    // and at 300 - the same reasoning the FPS controller uses for movement.
+    // b1 is deliberately not touched: one slot holds one object matrix, so it
+    // belongs to the draw that uses it rather than to the frame.
 
+    WriteLightConstants(material, frameSlot);
+}
+
+void WriteObjectConstants(Renderer::Material& material, const Math::Mat4& model,
+                          std::uint32_t frameSlot)
+{
     ObjectConstantData objectConstants{};
-    const Math::Mat4 model = Math::Mat4::Rotate(spinAngle, Math::Vec3::Up);
     std::memcpy(objectConstants.model, model.m, sizeof(objectConstants.model));
     material.SetConstantBuffer(1, objectConstants, frameSlot);
+}
 
-    // ---- b2: the light -------------------------------------------------
-    //
+void WriteLightConstants(Renderer::Material& material, std::uint32_t frameSlot)
+{
     // Direction points FROM the light, so a light above and beside the scene
     // travels down and inward. Normalised here as well as in the shader: the
     // shader normalises too, because a shader that cannot trust its inputs is a

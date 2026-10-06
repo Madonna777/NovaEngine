@@ -30,7 +30,7 @@
 //    - the byte offset of the attribute inside the CPU's vertex struct. The
 //      struct's order is the engine's, and this file accumulates offsets from
 //      the canonical order below. Three places agree on that order:
-//      ShaderReflection.cpp, VertexBuffer.h and common.hlsli's VSInput.
+//      ShaderReflection.cpp, Mesh.h and common.hlsli's VSInput.
 //
 //  WHY ORDERING IS PINNED BY HAND
 //  ------------------------------
@@ -53,7 +53,7 @@ namespace Nova::Renderer
 {
 namespace
 {
-/// The vertex layout order. This list IS the contract with VertexBuffer.h's
+/// The vertex layout order. This list IS the contract with Mesh.h's
 /// struct and common.hlsli's VSInput: all three must agree, and none of them
 /// can be reordered without updating the other two.
 enum class Semantic : std::uint8_t

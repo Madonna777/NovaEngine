@@ -29,6 +29,7 @@
 // ===========================================================================
 
 #include "FrameConstants.h"
+#include "SceneObjects.h"
 
 #include <Core/Application.h>
 #include <Core/Input.h>
@@ -38,8 +39,8 @@
 #include <Renderer/D3D12Context.h>
 #include <Renderer/Material.h>
 #include <Renderer/Pipeline.h>
+#include <Renderer/Mesh.h>
 #include <Renderer/Shader.h>
-#include <Renderer/VertexBuffer.h>
 #include <Scene/Camera.h>
 #include <Scene/FPSCameraController.h>
 
@@ -52,6 +53,16 @@
 
 namespace
 {
+/// Path the demo scene tries to load a model from before falling back to a
+/// procedural cube.
+///
+/// @note Relative to the working directory, which is the executable's folder
+///       under F5 and the repository root from a command line. The asset
+///       milestone replaces this with a manifest lookup; until then a constant
+///       is better than an empty string, because an empty path would make
+///       Assimp's error message useless.
+constexpr const char* kModelPath = "Assets/cube.obj";
+
 /// The application's own behaviour. Window, loop, timing and teardown are all
 /// inherited, which is the entire reason Application exists: a concrete
 /// executable becomes two methods instead of a copy of the loop.
@@ -112,14 +123,22 @@ protected:
 
         // ---- camera + FPS controller --------------------------------------
         //
-        // Set on-axis: the camera sits at z = -3 facing +Z, right at the
-        // origin-centred triangle. It has no render path through the shader
-        // yet - the triangle keeps its clip-space red/green/blue - so this is
-        // infrastructure for the first real MVU contraction, not something a
-        // capture can spot.
-        camera_.position = { 0.0F, 0.0F, -3.0F };
+        // Pulled back and slightly above the cube, looking at it.
+        //
+        // z = -4 rather than -3 because the cube now has depth: at 3 units a
+        // unit cube fills most of the frame, and orbiting it would push its own
+        // faces off screen before the camera finished a quarter turn. The
+        // y = 2.5 with a downward pitch is the same idea - without some elevation
+        // the ground plane is edge-on and invisible, so the scene has no floor
+        // to read the cube's height against.
+        camera_.position = { 0.0F, 2.5F, -4.0F };
         camera_.yaw      = 0.0F;
-        camera_.pitch    = 0.0F;
+
+        // Pitch is positive looking UP, so aiming down at the cube needs a
+        // negative value. This is the sign that is wrong in every engine's first
+        // hour, which is why it is written down here rather than left as a
+        // number to discover by orbiting the wrong way.
+        camera_.pitch    = Nova::Math::Radians(-25.0F);
 
         {
             const auto [w, h] = GetWindow().GetSize();
@@ -217,7 +236,7 @@ protected:
 
     void OnRenderFrame() override
     {
-        if (!context_ || !vertexBuffer_ || !pipeline_)
+        if (!context_ || !pipeline_)
         {
             // Only reachable if startup threw part-way through; Application
             // catches that and never enters the loop. Checked anyway: a null
@@ -264,12 +283,15 @@ protected:
         // order rather than on the frame count.
         frameSlot_ = (frameSlot_ + 1) % Nova::Renderer::D3D12Context::kFramesInFlight;
 
-        // Accumulate the yaw from the frame delta rather than wall-clock time so
-        // the spin rate is identical at 30 FPS and at 300 - the same reasoning
-        // the FPS controller uses for movement.
-        spinAngle_ += GetDeltaTime() * 0.6F;
+        // Camera and light. The object's own matrix is NOT written here: one b1
+        // slot holds one matrix and this frame has two objects, so it is per-draw
+        // state and gets written inside Draw, immediately before each draw.
+        Nova::Sandbox::UpdateFrameConstants(material_, camera_, frameSlot_);
 
-        Nova::Sandbox::UpdateFrameConstants(material_, camera_, frameSlot_, spinAngle_);
+        // Positions the spinning object. The elapsed time comes from the render
+        // loop's own clock rather than a delta accumulated here, so the animation
+        // and the camera cannot disagree about what time it is.
+        scene_.Update(material_, frameSlot_, GetElapsedTime());
 
         // The root signature is bound explicitly even though Pipeline::Bind also
         // sets it: this is the call that says "these root parameters are the
@@ -280,9 +302,10 @@ protected:
 
         material_.Bind(commandList, frameSlot_);
 
-        const D3D12_VERTEX_BUFFER_VIEW vertexBufferView = vertexBuffer_->GetVertexBufferView();
-        commandList->IASetVertexBuffers(0, 1, &vertexBufferView);
-        commandList->DrawInstanced(3, 1, 0, 0);
+        // Both objects in one call. Each writes b1 for itself immediately
+        // before its own draw, which is the arrangement a single object
+        // constant forces.
+        scene_.Draw(commandList, material_, frameSlot_);
 
         context_->EndFrame();
     }
@@ -380,45 +403,26 @@ private:
         pipeline_ = std::make_unique<Nova::Renderer::D3D12Pipeline>();
         pipeline_->Create(context_->GetDevice(), shader, context_->GetRootSignature());
 
-        // ---- vertex data ---------------------------------------------------
+        // ---- the scene ------------------------------------------------------
         //
-        // World-space positions in front of the camera, which sits at z = -3
-        // facing +Z. Each vertex carries the normal the lighting stage needs and
-        // a base colour the pixel shader multiplies the light by - so the
-        // gradient on screen is Lambert shading rather than a barycentric
-        // interpolation artefact.
+        // A cube and a ground plane, or a loaded model file when one is present.
+        // The scene is a separate translation unit: what is IN the scene is not
+        // application behaviour, and this is the part most likely to be replaced
+        // wholesale by the next milestone.
         //
-        // ONE FLAT TRIANGLE HAS ONE NORMAL, so the Lambert term is uniform
-        // across its interior - the visible variation is the gradient between the
-        // three vertex COLOURS, not a lighting gradient. The shading changes over
-        // time instead because the object model matrix rotates, which
-        // sweeps this one normal through the light: ndotl starts near 0.64, falls
-        // through zero as the face turns away, and the ambient floor keeps the
-        // back side visible rather than black. A mesh milestone replaces this
-        // with real per-face normals and the whole lighting model gets a
-        // gradient for free.
-        //
-        // THE NORMAL IS POINTED AT THE LIGHT ON PURPOSE. A normal of (0,0,-1) -
-        // "facing the camera", the reflex choice for a flat triangle - leaves
-        // ndotl at about 0.25 against this light, so the demo renders a dim,
-        // unlit-looking object and the shading path looks broken when it is
-        // working correctly. (0.25, 0.60, -0.76) is unit length and faces up and
-        // slightly toward the viewer, where the light can actually reach it.
-        const std::vector<Nova::Renderer::Vertex> triangle = {
-            // position            normal                uv              colour
-            { {  0.0F,  0.6F, 0.0F }, { 0.25F, 0.60F, -0.76F }, { 0.5F, 0.0F },
-              { 1.0F, 0.25F, 0.25F, 1.0F } },
-            { {  0.7F, -0.5F, 0.2F }, { 0.25F, 0.60F, -0.76F }, { 1.0F, 0.0F },
-              { 0.25F, 1.0F, 0.35F, 1.0F } },
-            { { -0.7F, -0.5F, 0.2F }, { 0.25F, 0.60F, -0.76F }, { 0.0F, 0.0F },
-              { 0.30F, 0.45F, 1.0F, 1.0F } },
-        };
+        // A missing model file is expected here and produces the procedural cube,
+        // so the renderer can be exercised with no content pipeline at all. That
+        // ordering matters: a pipeline that treats the hard-coded mesh as the
+        // primary path never gets its loader tested.
+        if (!scene_.Initialize(context_->GetDevice(), std::string(kModelPath)))
+        {
+            // Both the file and the procedural fallback failed. Not recoverable
+            // from inside the frame loop, and continuing would draw an empty
+            // scene that looks like a renderer bug.
+            throw std::runtime_error("Sandbox: could not create the demo scene");
+        }
 
-        vertexBuffer_ = std::make_unique<Nova::Renderer::D3D12VertexBuffer>(context_->GetDevice(),
-                                                                             triangle);
-        NOVA_CLIENT_INFO("Triangle ready: {} bytes, reflected stride {}",
-                         static_cast<unsigned>(triangle.size() * sizeof(Nova::Renderer::Vertex)),
-                         shader.GetVertexStride());
+        NOVA_CLIENT_INFO("Scene ready: reflected stride {}", shader.GetVertexStride());
     }
 
 private:
@@ -461,8 +465,8 @@ private:
     /// the frame that filled them.
     Nova::Renderer::Material material_;
 
-    /// The three vertices of the triangle, in an upload-heap buffer.
-    std::unique_ptr<Nova::Renderer::D3D12VertexBuffer> vertexBuffer_;
+    /// The demo scene: a cube or loaded model plus a ground plane.
+    Nova::Sandbox::DemoScene scene_;
 
     int   frames_     = 0;
 
@@ -470,7 +474,6 @@ private:
     std::uint32_t frameSlot_ = 0;
 
     /// Yaw of the object's model matrix, accumulated per frame.
-    float spinAngle_ = 0.0F;
 };
 } // namespace
 

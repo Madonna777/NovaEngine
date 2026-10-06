@@ -39,7 +39,7 @@
 // ---------------------------------------------------------------------------
 //  Per-vertex attributes. POSITION/NORMAL/TEXCOORD/COLOR are user-defined
 //  semantics consumed by the input assembler through D3D12_INPUT_ELEMENT_DESC;
-//  the CPU-side struct with the matching order lives in VertexBuffer.h.
+//  the CPU-side struct with the matching order lives in Mesh.h.
 // ---------------------------------------------------------------------------
 struct VSInput
 {

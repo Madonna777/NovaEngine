@@ -16,7 +16,7 @@
 // ===========================================================================
 
 // One attribute row the D3D12 fixed-function input assembler feeds to main().
-// The layout here matches Vertex in Engine/Renderer/VertexBuffer.h - order and
+// The layout here matches Vertex in Engine/Renderer/Mesh.h - order and
 // offsets must agree, because this shader reads raw attribute streams, not
 // C++ structs.
 struct VSInput

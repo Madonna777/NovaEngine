@@ -16,6 +16,7 @@
 // ===========================================================================
 #pragma once
 
+#include <Math/Mat4.h>
 #include <Renderer/Material.h>
 #include <Scene/Camera.h>
 
@@ -92,21 +93,37 @@ static_assert(sizeof(LightConstantData) == 32, "LightCB layout must match common
 /// @param material Material to own the buffers. Must already have SetDevice.
 void CreateFrameConstants(Renderer::Material& material);
 
-/// Writes this frame's constants into their per-frame slots.
+/// Writes the camera constants into b0, and the light into b2.
 ///
 /// @param material  Target material, already populated by CreateFrameConstants.
 /// @param camera    Camera supplying b0 for this frame.
 /// @param frameSlot Slot being written, 0 to frames-in-flight minus one.
-/// @param spinAngle Current yaw of the object model matrix, in radians.
 ///
-/// @note The light does not change between frames and is still written every
-///       frame. That is deliberate for now and wrong later: an unchanged 32-byte
-///       buffer rewritten per frame is noise, but the pattern does not scale to
-///       the per-draw buffers a scene with a thousand objects will have. Dirty
-///       tracking per buffer is the fix, and it lands with the scene graph.
+/// @note b1 is NOT written here. The object transform is per-draw state because
+///       one slot holds one matrix, so it is written by WriteObjectConstants
+///       immediately before each draw instead.
 void UpdateFrameConstants(Renderer::Material& material,
                           const Scene::Camera& camera,
-                          std::uint32_t    frameSlot,
-                          float            spinAngle);
+                          std::uint32_t    frameSlot);
+
+/// Writes one object's matrix into b1.
+///
+/// Separate from UpdateFrameConstants because b1 holds a SINGLE transform.
+/// Two objects in one frame therefore need two calls, each immediately before
+/// the draw that consumes it - which is why this is its own function rather
+/// than a parameter of the per-frame write.
+///
+/// @param material  Material owning the b1 buffer.
+/// @param model     Object-to-world matrix for the object about to be drawn.
+/// @param frameSlot Constant buffer slot for this frame.
+void WriteObjectConstants(Renderer::Material& material, const Math::Mat4& model,
+                          std::uint32_t frameSlot);
+
+/// Writes the directional light into b2.
+///
+/// Split out for the same reason as WriteObjectConstants: the light is not
+/// frame-dependent, and naming it separately makes it visible that it could be
+/// written once at startup instead of once per frame.
+void WriteLightConstants(Renderer::Material& material, std::uint32_t frameSlot);
 
 } // namespace Nova::Sandbox

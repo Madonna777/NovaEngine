@@ -127,6 +127,13 @@ int Application::Run()
             // cosmetic one.
             deltaTime_ = std::min(elapsed, properties_.maxDeltaSeconds);
 
+            // Accumulated from the CLAMPED delta, deliberately. Using the raw
+            // elapsed time here would make elapsedTime_ jump by a whole hitch
+            // while everything simulated that frame moved by maxDeltaSeconds -
+            // so an animation driven by this clock would visibly desynchronise
+            // from the physics every time the process stalls.
+            elapsedTime_ += deltaTime_;
+
             // Order is fixed and load-bearing:
             //   1. Pump events   - delivers input state, and sets ShouldClose
             //                      when the user clicks the title-bar X.

@@ -42,7 +42,7 @@ struct ConstantBufferDescription
 /// semantic name and index, never a type. There is no API that returns "this
 /// POSITION is float3". The mapping is therefore a convention this engine owns,
 /// and it must match both the HLSL struct in common.hlsli and the CPU vertex
-/// struct in VertexBuffer.h.
+/// struct in Mesh.h.
 struct InputLayoutElement
 {
     std::string semanticName;
@@ -108,7 +108,7 @@ public:
     /// the struct. Deriving offsets from that order would produce a layout that
     /// disagrees with the CPU's vertex struct the moment the names are not
     /// alphabetical. So the canonical order is pinned here, and the CPU-side
-    /// struct in VertexBuffer.h must use the same one.
+    /// struct in Mesh.h must use the same one.
     [[nodiscard]] std::vector<D3D12_INPUT_ELEMENT_DESC> BuildInputLayout() const;
 
     /// @return True when reflection ran and found no input parameters, which

@@ -27,6 +27,7 @@
 # contract finds a file named after it.
 add_executable(Sandbox
     src/FrameConstants.cpp
+    src/SceneObjects.cpp
     src/main.cpp
 )
 
@@ -53,6 +54,7 @@ target_link_libraries(Sandbox PRIVATE Nova::Core Nova::Renderer Nova::Math Nova:
 #  compiled sources. Marking them as sources would put them in the IDE's file
 #  list, which is misleading, and tempts someone into adding them to a target.
 set(NOVA_SHADER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../Shaders")
+set(NOVA_ASSET_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../Assets")
 
 if(EXISTS "${NOVA_SHADER_DIR}")
     add_custom_command(TARGET Sandbox POST_BUILD
@@ -65,4 +67,29 @@ else()
     message(FATAL_ERROR
         "Shaders directory not found at ${NOVA_SHADER_DIR}. The renderer loads "
         "shaders by path at runtime, so this must exist.")
+endif()
+
+# ---------------------------------------------------------------------------
+#  ASSETS
+# ---------------------------------------------------------------------------
+# Same reasoning as the shader staging above: a model file is loaded by path at
+# runtime, so it has to sit next to the executable. Copy the whole directory
+# rather than listing files, because the failure mode of a stale list is a model
+# that silently does not appear in a build that succeeded.
+#
+# WHY THE ASSET DIRECTORY IS NOT FATAL WHEN MISSING: the Sandbox falls back to a
+# procedural cube when the model is absent, so a checkout without Assets still
+# runs and still demonstrates the renderer. A warning rather than an error is
+# that fallback being visible in the build log.
+if(EXISTS "${NOVA_ASSET_DIR}")
+    add_custom_command(TARGET Sandbox POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${NOVA_ASSET_DIR}"
+                "$<TARGET_FILE_DIR:Sandbox>/Assets"
+        COMMENT "Staging assets into $<TARGET_FILE_DIR:Sandbox>/Assets"
+        VERBATIM)
+else()
+    message(WARNING
+        "Assets directory not found at ${NOVA_ASSET_DIR}. The Sandbox will "
+        "fall back to a procedural cube.")
 endif()
