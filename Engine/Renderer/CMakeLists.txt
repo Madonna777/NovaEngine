@@ -55,17 +55,25 @@
 
 nova_add_module(Renderer
     SOURCES
+        src/ConstantBuffer.cpp
         src/D3D12CommandQueue.cpp
         src/D3D12Context.cpp
         src/D3D12Device.cpp
         src/D3D12Helpers.cpp
+        src/D3D12RootSignature.cpp
         src/D3D12SwapChain.cpp
+        src/Material.cpp
         src/Pipeline.cpp
+        src/Shader.cpp
+        src/ShaderReflection.cpp
         src/VertexBuffer.cpp
     HEADERS
+        ConstantBuffer.h
         D3D12Context.h
         D3D12Helpers.h
+        Material.h
         Pipeline.h
+        Shader.h
         VertexBuffer.h
     DEPENDS
         Nova::Core
